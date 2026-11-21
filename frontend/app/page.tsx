@@ -54,7 +54,7 @@ export default function Home() {
         {isLoading && <p className="text-sm text-[var(--muted)]">Finding routes…</p>}
 
         {sharedError && !isLoading && (
-          <p role="alert" className="rounded-lg border-l-4 border-red-600 bg-red-50 px-3 py-2 text-sm text-red-900">
+          <p role="alert" className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900">
             {sharedError} Tap the map to start again.
           </p>
         )}
