@@ -1,5 +1,6 @@
 """Coverage area and file locations. Change these to grow beyond BU."""
 
+import os
 from datetime import timedelta
 from pathlib import Path
 
@@ -19,8 +20,17 @@ MAX_SNAP_DISTANCE_M = 250
 # (1 + SAFER_RISK_WEIGHT) times its length. Starting value; tune with data.
 SAFER_RISK_WEIGHT = 4.0
 
-# Browser origins allowed to call the API (the Next.js dev server).
+# Browser origins allowed to call the API: the Next.js dev server by default.
+# For a deployment, set LUMI_FRONTEND_ORIGINS to a comma-separated list.
 FRONTEND_ORIGINS = ["http://localhost:3000"]
+
+
+def frontend_origins() -> list[str]:
+    """Allowed origins: LUMI_FRONTEND_ORIGINS if set, else FRONTEND_ORIGINS."""
+    raw = os.environ.get("LUMI_FRONTEND_ORIGINS", "")
+    origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
+    return origins or list(FRONTEND_ORIGINS)
+
 
 # Community reports (app/reports.py).
 # Different users needed to flip a segment between blocked and open.
@@ -28,3 +38,10 @@ VOTES_TO_FLIP = 4
 # A user with this many blocked reports inside the window must send a photo.
 MAX_BLOCK_REPORTS_IN_WINDOW = 3
 BLOCK_REPORT_WINDOW = timedelta(hours=24)
+
+# Report endpoints (app/main.py).
+# A user must be this close to a segment to vote on it, and GET /segments/nearby
+# returns reported segments within this distance.
+NEARBY_RADIUS_M = 50
+# Largest photo POST /reports accepts (5 MiB).
+MAX_PHOTO_BYTES = 5 * 1024 * 1024
