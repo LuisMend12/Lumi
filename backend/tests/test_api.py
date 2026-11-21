@@ -113,3 +113,22 @@ def test_route_rejects_points_that_snap_to_the_same_intersection(client):
     assert response.json()["detail"] == (
         "Start and destination are too close to route between. Pick points farther apart."
     )
+
+
+def test_route_hazard_has_segment_id_location_and_verification(street_graph):
+    hazards = {segment_key("B", "A"): [Hazard(kind="ice", severity=0.6, blocked=False)]}
+    app = create_app(graph=street_graph, hazards=hazards)
+
+    with TestClient(app) as test_client:
+        response = test_client.get("/route", params={**A_TO_D, "mode": "shortest"})
+
+    assert response.status_code == 200
+    [hazard] = response.json()["hazards"]
+    assert hazard == {
+        "segment_id": "A-B",
+        "location": pytest.approx([42.3500, -71.1074]),
+        "kind": "ice",
+        "severity": 0.6,
+        "blocked": False,
+        "verification": "confirmed",
+    }

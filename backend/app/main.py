@@ -1,7 +1,7 @@
 """Lumi API: street routing around Boston University."""
 
 from contextlib import asynccontextmanager
-from typing import Annotated
+from typing import Annotated, Literal
 
 import networkx as nx
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -16,9 +16,13 @@ Longitude = Annotated[float, Query(ge=-180, le=180)]
 
 
 class HazardOut(BaseModel):
+    segment_id: str  # "<u>-<v>", smaller OSM node id first
+    location: tuple[float, float]  # (lat, lon) segment midpoint, where the warning goes on the map
     kind: str
     severity: float
     blocked: bool
+    # Only confirmed reports reach routing today; unverified and pending come with the report endpoints.
+    verification: Literal["confirmed", "unverified", "pending"]
 
 
 class RouteOut(BaseModel):
@@ -81,7 +85,17 @@ def create_app(graph: nx.DiGraph | None = None, hazards: Hazards | None = None) 
             coordinates=result.coordinates,
             snapped_start=_lat_lon(street_graph, start),
             snapped_end=_lat_lon(street_graph, end),
-            hazards=[HazardOut(kind=h.kind, severity=h.severity, blocked=h.blocked) for h in result.hazards],
+            hazards=[
+                HazardOut(
+                    segment_id=rh.segment_id,
+                    location=rh.location,
+                    kind=rh.hazard.kind,
+                    severity=rh.hazard.severity,
+                    blocked=rh.hazard.blocked,
+                    verification="confirmed",
+                )
+                for rh in result.hazards
+            ],
         )
 
     return app
