@@ -4,7 +4,68 @@
 
 Winter walking navigation for Boston. Lumi recommends walking routes that account for reported snow, ice, and blocked sidewalks, not just distance. Built for HackBoston.
 
-> **Status:** early. The routing backend works for a 1.5 km area around Boston University. Hazard reports, the frontend, and photo analysis are not built yet.
+> **Status:** early. You can open a map of the 1.5 km area around Boston University, click a start and a destination, and compare the three route modes. Report rules exist in the backend, but there are no report endpoints, storage, or login yet. Plan and open questions: [docs/plans/2026-11-21-lumi-plan.md](docs/plans/2026-11-21-lumi-plan.md).
+
+## Run the app
+
+You need two terminals: one for the backend API, one for the map website. Both keep running until you stop them with **Ctrl+C**.
+
+### Prerequisites (one-time)
+
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) for the Python backend. It installs Python 3.12 automatically.
+- [Node.js](https://nodejs.org/) 20 or newer, which includes `npm`.
+
+Install the dependencies once after cloning:
+
+```bash
+cd backend
+uv sync
+cd ../frontend
+npm install
+```
+
+### Terminal 1: backend API
+
+```bash
+cd backend
+uv run uvicorn app.main:app --reload
+```
+
+The backend is ready when it prints `Uvicorn running on http://127.0.0.1:8000`. Loading the street map takes a few seconds. API docs: http://127.0.0.1:8000/docs
+
+### Terminal 2: map website
+
+```bash
+cd frontend
+npm run dev
+```
+
+The website is ready when it prints `Local: http://localhost:3000`.
+
+### Use it
+
+1. Open **http://localhost:3000**. Use `localhost`, not `127.0.0.1`; the backend only accepts requests from `localhost:3000`.
+2. Click the map once to set your start, then again to set your destination. Stay inside the dashed circle.
+3. The Shortest, Safer, and Accessible routes are drawn in different colors. Click a card or a line to see what that mode means.
+
+Until hazards are reported, all three modes show the same route.
+
+### Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| "Can't reach the Lumi server" on the page | Terminal 1 isn't running or is still loading |
+| "…outside Lumi's coverage area" | Click inside the dashed circle |
+| `&&` errors in Windows PowerShell | Run the `cd` and the next command as separate lines |
+| Path with spaces fails | Put the path in quotes: `cd "G:\some folder\Lumi\backend"` |
+| Port already in use | Another copy is still running. Close it, or stop it with Ctrl+C |
+
+### Secrets
+
+Never commit keys. `.env` files and any file ending in `.env` are gitignored.
+
+- **Backend:** API keys (for example `ANTHROPIC_API_KEY`) go in `backend/.env`. See [backend/README.md](backend/README.md).
+- **Frontend:** the backend URL can be changed with `NEXT_PUBLIC_API_URL` in `frontend/.env.local`. The default is `http://127.0.0.1:8000`.
 
 ## What works today
 
@@ -14,19 +75,13 @@ Winter walking navigation for Boston. Lumi recommends walking routes that accoun
 - Every response includes a plain-language explanation of what the chosen mode means.
 - Points outside the coverage area are rejected with a clear message.
 
+- A map website (`frontend/`) that draws all three routes between two clicked points.
+
 Hazard reports are not stored yet: the hazard list is empty while the server runs, so all three modes currently return the same route.
 
-## Run the backend
+## API example
 
-Requires [uv](https://docs.astral.sh/uv/). It installs Python 3.12 automatically.
-
-```bash
-cd backend
-uv sync
-uv run uvicorn app.main:app --reload
-```
-
-Open http://127.0.0.1:8000/docs to try the API. Example, Marsh Plaza to Kenmore Square:
+With the backend running, open http://127.0.0.1:8000/docs to try the API. Example, Marsh Plaza to Kenmore Square:
 
 ```
 GET http://127.0.0.1:8000/route?start_lat=42.3504&start_lon=-71.1060&end_lat=42.3489&end_lon=-71.0951&mode=safer
@@ -91,13 +146,19 @@ Keeping all routing logic in that one function means adding modes or making old 
 ## Project layout
 
 ```
-backend/
+backend/                 Python + FastAPI (details: backend/README.md)
   app/config.py          coverage area, file paths, tuning constants
   app/routing.py         modes, hazards, weight function, route search, point snapping
+  app/reports.py         report rules (photo review, votes, 4-user flip); no endpoints yet
   app/main.py            FastAPI app: /health, /route
   scripts/build_graph.py downloads the street graph
   data/bu_walk.graphml   the street graph (committed so nobody has to re-download)
-  tests/                 routing and API tests
+  tests/                 routing, report, and API tests
+frontend/                Next.js + TypeScript + Tailwind + Leaflet
+  app/page.tsx           the page: click points, mode cards
+  components/RouteMap.tsx the map and route lines
+  lib/api.ts             calls the backend /route endpoint
+docs/plans/              plan and open decisions for review
 ```
 
 ## Decisions so far
@@ -113,15 +174,15 @@ backend/
 
 ## Next up
 
-1. **Hazard reports:** `POST /reports`, stored in TigerData, loaded into the hazards dict. Open question: how much evidence should it take before a segment counts as fully blocked?
-2. **Frontend:** a Next.js map that draws routes from `/route`.
-3. **Photo analysis:** a vision model that drafts a hazard report from an uploaded photo.
+1. **Report endpoints:** photo report, one-tap "blocked / unblocked" vote, the nearby check, and wiring in the photo agent.
+2. **Demo bots:** simulated, clearly labeled users that report so the live demo shows routes changing.
+3. **Storage and login:** TigerData, plus a login provider.
 
-Later: Mastra (AI agent), a GoDaddy domain plus hosting, other sponsor tools, and weather-based predictions.
+Later: Mastra as the photo-review agent, Gemini image generation for branding, a GoDaddy domain plus hosting, and weather-based predictions.
 
 ## Known limitations
 
 - Hazard reports aren't implemented, so routes currently ignore real conditions.
 - Accessible mode has no curb ramp or slope data yet; it treats hazards the same way Safer does.
-- Points snap to the nearest intersection, not the nearest point along a sidewalk.
+- Points snap to the nearest intersection, not the nearest point along a sidewalk. The short stretch to that intersection isn't drawn.
 - Never present a route as "safe": reports can be missing or out of date.
