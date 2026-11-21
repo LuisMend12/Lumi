@@ -1,0 +1,208 @@
+from datetime import datetime, timedelta
+
+import pytest
+
+from app.reports import (
+    PhotoVerdict,
+    ReportOutcome,
+    SegmentReports,
+    SegmentStatus,
+)
+from app.routing import RouteMode, find_route, segment_key
+
+AB = segment_key("A", "B")
+PHOTO = b"fake-jpeg-bytes"
+T0 = datetime(2026, 11, 21, 12, 0)
+
+
+def reviewer(verdict: PhotoVerdict):
+    """Fake photo agent that always returns the same verdict."""
+    return lambda photo: verdict
+
+
+def blocked_book() -> SegmentReports:
+    book = SegmentReports(review_photo=reviewer(PhotoVerdict.CONFIRMED))
+    book.report_blocked_with_photo(AB, "reporter", PHOTO, T0)
+    return book
+
+
+# --- Photo reports ---------------------------------------------------------
+
+
+def test_confirmed_photo_report_blocks_segment():
+    book = SegmentReports(review_photo=reviewer(PhotoVerdict.CONFIRMED))
+
+    outcome = book.report_blocked_with_photo(AB, "alice", PHOTO, T0)
+
+    assert outcome is ReportOutcome.STATUS_CHANGED
+    assert book.status(AB) is SegmentStatus.BLOCKED
+
+
+def test_rejected_photo_is_kept_as_unverified_and_does_not_block():
+    book = SegmentReports(review_photo=reviewer(PhotoVerdict.REJECTED))
+
+    outcome = book.report_blocked_with_photo(AB, "alice", PHOTO, T0)
+
+    assert outcome is ReportOutcome.UNVERIFIED
+    assert book.status(AB) is SegmentStatus.OPEN
+    assert [r.segment for r in book.unverified_reports()] == [AB]
+
+
+def test_agent_outage_keeps_report_pending_and_does_not_block():
+    book = SegmentReports(review_photo=reviewer(PhotoVerdict.UNAVAILABLE))
+
+    outcome = book.report_blocked_with_photo(AB, "alice", PHOTO, T0)
+
+    assert outcome is ReportOutcome.PENDING
+    assert book.status(AB) is SegmentStatus.OPEN
+    assert [r.segment for r in book.pending_reports()] == [AB]
+
+
+def test_retrying_pending_report_blocks_once_agent_confirms():
+    verdicts = iter([PhotoVerdict.UNAVAILABLE, PhotoVerdict.CONFIRMED])
+    book = SegmentReports(review_photo=lambda photo: next(verdicts))
+    book.report_blocked_with_photo(AB, "alice", PHOTO, T0)
+
+    book.retry_pending()
+
+    assert book.status(AB) is SegmentStatus.BLOCKED
+    assert book.pending_reports() == []
+
+
+# --- One-tap votes ---------------------------------------------------------
+
+
+def test_three_unblocked_votes_do_not_flip_a_blocked_segment():
+    book = blocked_book()
+
+    for user in ["u1", "u2", "u3"]:
+        book.vote(AB, user, blocked=False, now=T0)
+
+    assert book.status(AB) is SegmentStatus.BLOCKED
+
+
+def test_fourth_distinct_user_flips_blocked_to_open():
+    book = blocked_book()
+    for user in ["u1", "u2", "u3"]:
+        book.vote(AB, user, blocked=False, now=T0)
+
+    outcome = book.vote(AB, "u4", blocked=False, now=T0)
+
+    assert outcome is ReportOutcome.STATUS_CHANGED
+    assert book.status(AB) is SegmentStatus.OPEN
+
+
+def test_same_user_voting_repeatedly_counts_once():
+    book = blocked_book()
+
+    for _ in range(4):
+        book.vote(AB, "u1", blocked=False, now=T0)
+
+    assert book.status(AB) is SegmentStatus.BLOCKED
+
+
+def test_user_changing_their_vote_only_keeps_the_latest():
+    book = blocked_book()
+    for user in ["u1", "u2", "u3"]:
+        book.vote(AB, user, blocked=False, now=T0)
+
+    book.vote(AB, "u1", blocked=True, now=T0)
+    book.vote(AB, "u4", blocked=False, now=T0)
+
+    assert book.status(AB) is SegmentStatus.BLOCKED
+
+
+def test_four_distinct_blocked_votes_block_an_open_segment():
+    book = SegmentReports(review_photo=reviewer(PhotoVerdict.CONFIRMED))
+
+    for user in ["u1", "u2", "u3", "u4"]:
+        book.vote(AB, user, blocked=True, now=T0)
+
+    assert book.status(AB) is SegmentStatus.BLOCKED
+
+
+def test_votes_before_a_status_change_do_not_carry_over():
+    book = blocked_book()
+    for user in ["u1", "u2", "u3", "u4"]:
+        book.vote(AB, user, blocked=False, now=T0)  # flips to OPEN
+
+    for user in ["u5", "u6", "u7"]:
+        book.vote(AB, user, blocked=True, now=T0)
+
+    assert book.status(AB) is SegmentStatus.OPEN
+
+
+# --- Abuse rule ------------------------------------------------------------
+
+
+def test_user_with_too_many_recent_block_reports_must_send_a_photo():
+    book = SegmentReports(review_photo=reviewer(PhotoVerdict.CONFIRMED))
+    for other in ["s1", "s2", "s3"]:
+        book.vote(segment_key("X", other), "spammer", blocked=True, now=T0)
+
+    outcome = book.vote(AB, "spammer", blocked=True, now=T0)
+
+    assert outcome is ReportOutcome.PHOTO_REQUIRED
+
+
+def test_photo_required_vote_is_not_counted():
+    book = SegmentReports(review_photo=reviewer(PhotoVerdict.CONFIRMED))
+    for other in ["s1", "s2", "s3"]:
+        book.vote(segment_key("X", other), "spammer", blocked=True, now=T0)
+    book.vote(AB, "spammer", blocked=True, now=T0)  # refused
+
+    for user in ["u1", "u2", "u3"]:
+        book.vote(AB, user, blocked=True, now=T0)
+
+    assert book.status(AB) is SegmentStatus.OPEN
+
+
+def test_block_reports_older_than_the_window_are_forgotten():
+    book = SegmentReports(review_photo=reviewer(PhotoVerdict.CONFIRMED))
+    for other in ["s1", "s2", "s3"]:
+        book.vote(segment_key("X", other), "busy", blocked=True, now=T0)
+
+    outcome = book.vote(AB, "busy", blocked=True, now=T0 + timedelta(hours=25))
+
+    assert outcome is ReportOutcome.VOTE_RECORDED
+
+
+def test_flagged_user_can_still_report_with_a_photo():
+    book = SegmentReports(review_photo=reviewer(PhotoVerdict.CONFIRMED))
+    for other in ["s1", "s2", "s3"]:
+        book.vote(segment_key("X", other), "spammer", blocked=True, now=T0)
+
+    outcome = book.report_blocked_with_photo(AB, "spammer", PHOTO, T0)
+
+    assert outcome is ReportOutcome.STATUS_CHANGED
+
+
+def test_unblocked_votes_are_never_limited():
+    book = blocked_book()
+    for other in ["s1", "s2", "s3"]:
+        book.vote(segment_key("X", other), "helper", blocked=True, now=T0)
+
+    outcome = book.vote(AB, "helper", blocked=False, now=T0)
+
+    assert outcome is ReportOutcome.VOTE_RECORDED
+
+
+# --- Routing integration ---------------------------------------------------
+
+
+@pytest.mark.parametrize("mode", list(RouteMode))
+def test_blocked_segment_changes_route_in_every_mode(street_graph, mode):
+    book = blocked_book()
+
+    route = find_route(street_graph, "A", "D", mode, book.hazards())
+
+    assert route.nodes == ["A", "C", "D"]
+
+
+def test_unverified_and_pending_reports_do_not_affect_routing(street_graph):
+    book = SegmentReports(review_photo=reviewer(PhotoVerdict.REJECTED))
+    book.report_blocked_with_photo(AB, "alice", PHOTO, T0)
+
+    route = find_route(street_graph, "A", "D", RouteMode.SHORTEST, book.hazards())
+
+    assert route.nodes == ["A", "B", "D"]

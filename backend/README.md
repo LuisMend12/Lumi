@@ -81,6 +81,7 @@ The hazards dict is empty for now: hazard reports aren't implemented, so all thr
 app/
   config.py        coverage area, file paths, tuning constants
   routing.py       modes, Hazard, weight function, Dijkstra, point snapping
+  reports.py       report rules: photo review, one-tap votes, 4-user flip, abuse limit (in memory, no endpoints yet)
   main.py          FastAPI app factory (create_app) and endpoints
 scripts/
   build_graph.py   download the OSM walk network -> data/bu_walk.graphml
