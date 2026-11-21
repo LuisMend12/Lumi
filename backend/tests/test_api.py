@@ -85,3 +85,17 @@ def test_route_returns_404_when_no_path_exists(street_graph):
         response = test_client.get("/route", params={**A_TO_D, "mode": "safer"})
 
     assert response.status_code == 404
+
+
+def test_accessible_route_returns_404_when_only_stairs_connect(street_graph):
+    for u, v in [("A", "B"), ("A", "C")]:
+        street_graph.edges[u, v]["highway"] = "steps"
+        street_graph.edges[v, u]["highway"] = "steps"
+    app = create_app(graph=street_graph)
+
+    with TestClient(app) as test_client:
+        accessible = test_client.get("/route", params={**A_TO_D, "mode": "accessible"})
+        shortest = test_client.get("/route", params={**A_TO_D, "mode": "shortest"})
+
+    assert accessible.status_code == 404
+    assert shortest.status_code == 200
