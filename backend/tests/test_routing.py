@@ -106,3 +106,14 @@ def test_nearest_node_snaps_point_and_reports_distance(street_graph):
 
     assert node == "A"
     assert distance_m < 20
+
+
+@pytest.mark.parametrize("severity", [-1.0, 1.5, float("nan")])
+def test_hazard_rejects_severity_outside_zero_to_one(severity):
+    with pytest.raises(ValueError):
+        Hazard(kind="ice", severity=severity, blocked=False)
+
+
+@pytest.mark.parametrize("severity", [0.0, 1.0])
+def test_hazard_accepts_severity_at_the_bounds(severity):
+    assert Hazard(kind="ice", severity=severity, blocked=False).severity == severity
