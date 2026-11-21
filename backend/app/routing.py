@@ -1,0 +1,119 @@
+"""Risk-aware pedestrian routing (design option A).
+
+The street graph is never modified. Hazard reports live in a separate
+dict, and a weight function combines the two on every route request.
+"""
+
+from collections.abc import Callable, Hashable
+from dataclasses import dataclass
+from enum import Enum
+
+import networkx as nx
+import numpy as np
+
+from app.config import SAFER_RISK_WEIGHT
+
+EARTH_RADIUS_M = 6_371_000
+
+SegmentKey = frozenset
+Hazards = dict[SegmentKey, list["Hazard"]]
+
+
+class RouteMode(str, Enum):
+    SHORTEST = "shortest"
+    SAFER = "safer"
+    ACCESSIBLE = "accessible"
+
+    @property
+    def description(self) -> str:
+        return _MODE_DESCRIPTIONS[self]
+
+
+_MODE_DESCRIPTIONS = {
+    RouteMode.SHORTEST: (
+        "Shortest: the most direct walk. Skips sidewalks reported fully blocked, "
+        "but may pass reported snow or ice. Check the warnings along the route."
+    ),
+    RouteMode.SAFER: (
+        "Safer: detours around reported snow, ice, and obstructions when a "
+        "reasonable alternative exists. Based on community reports, which can be "
+        "incomplete. Not a guarantee that the route is safe."
+    ),
+    RouteMode.ACCESSIBLE: (
+        "Accessible: skips sidewalks reported fully blocked and avoids reported "
+        "hazards. Curb ramp and slope data is not included yet, so confirm the "
+        "route before relying on it."
+    ),
+}
+
+
+@dataclass(frozen=True)
+class Hazard:
+    kind: str
+    severity: float  # 0.0 (minor) to 1.0 (severe)
+    blocked: bool  # True = nobody can pass; every mode skips the segment
+
+
+@dataclass(frozen=True)
+class Route:
+    nodes: list[Hashable]
+    coordinates: list[tuple[float, float]]  # (lat, lon) in walking order
+    distance_m: float
+    hazards: list[Hazard]  # hazards on segments the route still uses
+
+
+class NoRouteError(Exception):
+    """No path exists that avoids every blocked segment."""
+
+
+def segment_key(u: Hashable, v: Hashable) -> SegmentKey:
+    """Same key for both walking directions of a sidewalk segment."""
+    return frozenset((u, v))
+
+
+def _risk(hazards: list[Hazard]) -> float:
+    return max((hazard.severity for hazard in hazards), default=0.0)
+
+
+def make_weight(mode: RouteMode, hazards: Hazards) -> Callable[[Hashable, Hashable, dict], float | None]:
+    """Build the per-request cost function. Returning None makes NetworkX skip the edge."""
+
+    def weight(u: Hashable, v: Hashable, edge: dict) -> float | None:
+        segment_hazards = hazards.get(segment_key(u, v), [])
+        if any(hazard.blocked for hazard in segment_hazards):
+            return None
+        length = edge["length"]
+        if mode is RouteMode.SHORTEST:
+            return length
+        return length * (1 + SAFER_RISK_WEIGHT * _risk(segment_hazards))
+
+    return weight
+
+
+def find_route(
+    graph: nx.DiGraph, start: Hashable, end: Hashable, mode: RouteMode, hazards: Hazards
+) -> Route:
+    try:
+        nodes = nx.dijkstra_path(graph, start, end, weight=make_weight(mode, hazards))
+    except nx.NetworkXNoPath as error:
+        raise NoRouteError(f"No route from {start} to {end} avoids blocked sidewalks") from error
+
+    segments = list(zip(nodes, nodes[1:]))
+    return Route(
+        nodes=nodes,
+        coordinates=[(graph.nodes[n]["y"], graph.nodes[n]["x"]) for n in nodes],
+        distance_m=sum(graph.edges[u, v]["length"] for u, v in segments),
+        hazards=[h for u, v in segments for h in hazards.get(segment_key(u, v), [])],
+    )
+
+
+def nearest_node(graph: nx.DiGraph, lat: float, lon: float) -> tuple[Hashable, float]:
+    """Closest intersection to a point, and its distance in meters (haversine)."""
+    node_ids = list(graph.nodes)
+    lats = np.radians([graph.nodes[n]["y"] for n in node_ids])
+    lons = np.radians([graph.nodes[n]["x"] for n in node_ids])
+    lat0, lon0 = np.radians(lat), np.radians(lon)
+    a = np.sin((lats - lat0) / 2) ** 2 + np.cos(lat0) * np.cos(lats) * np.sin((lons - lon0) / 2) ** 2
+    distances = 2 * EARTH_RADIUS_M * np.arcsin(np.sqrt(a))
+    index = int(np.argmin(distances))
+    return node_ids[index], float(distances[index])
