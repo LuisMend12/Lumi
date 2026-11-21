@@ -67,7 +67,9 @@ def test_route_rejects_point_outside_coverage_area(client):
     response = client.get("/route", params={**far_away, "mode": "shortest"})
 
     assert response.status_code == 422
-    assert "outside" in response.json()["detail"]
+    detail = response.json()["detail"]
+    assert "outside" in detail
+    assert "nearest mapped intersection" in detail
 
 
 def test_route_rejects_invalid_latitude(client):
@@ -85,3 +87,29 @@ def test_route_returns_404_when_no_path_exists(street_graph):
         response = test_client.get("/route", params={**A_TO_D, "mode": "safer"})
 
     assert response.status_code == 404
+
+
+def test_route_returns_snapped_start_and_end(client):
+    # Tapped points a little off A and D; the route starts and ends at those intersections.
+    tapped = {"start_lat": 42.34995, "start_lon": -71.10795, "end_lat": 42.35005, "end_lon": -71.10565}
+
+    response = client.get("/route", params={**tapped, "mode": "shortest"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["snapped_start"] == [42.3500, -71.1080]
+    assert body["snapped_end"] == [42.3500, -71.1056]
+    assert body["coordinates"][0] == body["snapped_start"]
+    assert body["coordinates"][-1] == body["snapped_end"]
+
+
+def test_route_rejects_points_that_snap_to_the_same_intersection(client):
+    # Both points are a few meters from A.
+    near_a = {"start_lat": 42.34995, "start_lon": -71.10795, "end_lat": 42.35005, "end_lon": -71.10805}
+
+    response = client.get("/route", params={**near_a, "mode": "safer"})
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "Start and destination are too close to route between. Pick points farther apart."
+    )
