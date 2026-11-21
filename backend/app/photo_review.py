@@ -20,7 +20,9 @@ from app.reports import PhotoReviewer, PhotoVerdict
 logger = logging.getLogger(__name__)
 
 MODEL = "claude-opus-5-5"
-MAX_TOKENS = 4000
+# Claude Opus 5.5 always thinks first, and thinking counts toward max_tokens.
+# Too low a cap cuts the answer off (no parsed output -> report stuck pending).
+MAX_TOKENS = 16000
 MAX_IMAGE_BYTES = 5 * 1024 * 1024  # API limit for base64 images
 
 PROMPT = (
