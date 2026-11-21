@@ -10,6 +10,8 @@ tiger/
 __pycache__/
 *.pyc
 .pytest_cache/
+# OSMnx download cache (scripts/build_graph.py); the graph in backend/data/ stays committed
+backend/cache/
 
 # Node
 node_modules/
