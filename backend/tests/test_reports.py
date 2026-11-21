@@ -206,3 +206,70 @@ def test_unverified_and_pending_reports_do_not_affect_routing(street_graph):
     route = find_route(street_graph, "A", "D", RouteMode.SHORTEST, book.hazards())
 
     assert route.nodes == ["A", "B", "D"]
+
+
+# --- What the API lists ----------------------------------------------------
+
+
+def test_confirmed_reports_are_kept_with_their_id_and_location():
+    book = SegmentReports(review_photo=reviewer(PhotoVerdict.CONFIRMED))
+
+    book.report_blocked_with_photo(AB, "alice", PHOTO, T0, report_id="r_1", location=(42.35, -71.107))
+
+    [report] = book.confirmed_reports()
+    assert (report.report_id, report.segment, report.user_id) == ("r_1", AB, "alice")
+    assert report.location == (42.35, -71.107)
+    assert report.reported_at == T0
+
+
+def test_report_gets_an_id_when_none_is_given():
+    book = SegmentReports(review_photo=reviewer(PhotoVerdict.REJECTED))
+
+    book.report_blocked_with_photo(AB, "alice", PHOTO, T0)
+
+    [report] = book.unverified_reports()
+    assert report.report_id.startswith("r_")
+
+
+def test_retried_report_moves_from_pending_to_confirmed():
+    verdicts = iter([PhotoVerdict.UNAVAILABLE, PhotoVerdict.CONFIRMED])
+    book = SegmentReports(review_photo=lambda photo: next(verdicts))
+    book.report_blocked_with_photo(AB, "alice", PHOTO, T0, report_id="r_1")
+
+    book.retry_pending()
+
+    assert [r.report_id for r in book.confirmed_reports()] == ["r_1"]
+
+
+def test_known_verdict_skips_the_reviewer():
+    def no_reviewer(photo):
+        raise AssertionError("reviewer must not be called")
+
+    book = SegmentReports(review_photo=no_reviewer)
+
+    outcome = book.report_blocked_with_photo(AB, "alice", PHOTO, T0, verdict=PhotoVerdict.CONFIRMED)
+
+    assert outcome is ReportOutcome.STATUS_CHANGED
+    assert book.status(AB) is SegmentStatus.BLOCKED
+
+
+def test_reported_segments_include_votes_and_every_kind_of_photo_report():
+    verdicts = iter([PhotoVerdict.CONFIRMED, PhotoVerdict.REJECTED, PhotoVerdict.UNAVAILABLE])
+    book = SegmentReports(review_photo=lambda photo: next(verdicts))
+    for other in ["s1", "s2", "s3"]:
+        book.report_blocked_with_photo(segment_key("X", other), "alice", PHOTO, T0)
+    book.vote(AB, "bob", blocked=True, now=T0)
+
+    assert book.reported_segments() == {segment_key("X", s) for s in ["s1", "s2", "s3"]} | {AB}
+
+
+def test_user_needs_photo_matches_the_vote_rule():
+    book = SegmentReports(review_photo=reviewer(PhotoVerdict.CONFIRMED))
+    for other in ["s1", "s2"]:
+        book.vote(segment_key("X", other), "busy", blocked=True, now=T0)
+    assert not book.needs_photo("busy", T0)
+
+    book.vote(segment_key("X", "s3"), "busy", blocked=True, now=T0)
+
+    assert book.needs_photo("busy", T0)
+    assert not book.needs_photo("busy", T0 + timedelta(hours=25))

@@ -9,11 +9,12 @@ Rules (team decisions):
 - AI never decides alone: a rejected photo stays "unverified", and a photo the
   agent could not review stays "pending". Neither affects routing.
 
-Everything is in memory for now; storage and login come in later steps.
+Everything is in memory here; storage and login come in later steps.
 """
 
+import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import Enum
 
@@ -45,12 +46,18 @@ class ReportOutcome(str, Enum):
 PhotoReviewer = Callable[[bytes], PhotoVerdict]
 
 
+def new_report_id() -> str:
+    return f"r_{uuid.uuid4().hex[:12]}"
+
+
 @dataclass(frozen=True)
 class PhotoReport:
     segment: SegmentKey
     user_id: str
-    photo: bytes
+    photo: bytes  # kept only while pending, so the photo can be re-reviewed
     reported_at: datetime
+    report_id: str = field(default_factory=new_report_id)
+    location: tuple[float, float] | None = None  # (lat, lon) the user reported from
 
 
 class SegmentReports:
@@ -62,6 +69,7 @@ class SegmentReports:
         # Latest vote per user since the segment's last status change.
         self._votes: dict[SegmentKey, dict[str, SegmentStatus]] = {}
         self._block_reports: dict[str, list[datetime]] = {}
+        self._confirmed: list[PhotoReport] = []
         self._unverified: list[PhotoReport] = []
         self._pending: list[PhotoReport] = []
 
@@ -69,13 +77,29 @@ class SegmentReports:
         return self._status.get(segment, SegmentStatus.OPEN)
 
     def report_blocked_with_photo(
-        self, segment: SegmentKey, user_id: str, photo: bytes, now: datetime
+        self,
+        segment: SegmentKey,
+        user_id: str,
+        photo: bytes,
+        now: datetime,
+        *,
+        report_id: str | None = None,
+        location: tuple[float, float] | None = None,
+        verdict: PhotoVerdict | None = None,
     ) -> ReportOutcome:
+        """Record a photo report. Pass `verdict` when the photo was already
+        reviewed (by the API outside its lock, or when replaying storage);
+        otherwise the reviewer is called here."""
         self._remember_block_report(user_id, now)
-        return self._apply_review(PhotoReport(segment, user_id, photo, now))
+        report = PhotoReport(segment, user_id, photo, now, report_id or new_report_id(), location)
+        return self._apply_review(report, verdict)
+
+    def needs_photo(self, user_id: str, now: datetime) -> bool:
+        """True if a blocked vote from this user would get PHOTO_REQUIRED."""
+        return self._too_many_block_reports(user_id, now)
 
     def vote(self, segment: SegmentKey, user_id: str, blocked: bool, now: datetime) -> ReportOutcome:
-        if blocked and self._too_many_block_reports(user_id, now):
+        if blocked and self.needs_photo(user_id, now):
             return ReportOutcome.PHOTO_REQUIRED
         if blocked:
             self._remember_block_report(user_id, now)
@@ -103,20 +127,35 @@ class SegmentReports:
             if status is SegmentStatus.BLOCKED
         }
 
+    def confirmed_reports(self) -> list[PhotoReport]:
+        return list(self._confirmed)
+
     def unverified_reports(self) -> list[PhotoReport]:
         return list(self._unverified)
 
     def pending_reports(self) -> list[PhotoReport]:
         return list(self._pending)
 
-    def _apply_review(self, report: PhotoReport) -> ReportOutcome:
-        verdict = self._review_photo(report.photo)
-        if verdict is PhotoVerdict.REJECTED:
-            self._unverified.append(report)
-            return ReportOutcome.UNVERIFIED
+    def reported_segments(self) -> set[SegmentKey]:
+        """Every segment with a status, a current vote or a photo report."""
+        segments = set(self._status)
+        segments.update(segment for segment, votes in self._votes.items() if votes)
+        for reports in (self._confirmed, self._unverified, self._pending):
+            segments.update(report.segment for report in reports)
+        return segments
+
+    def _apply_review(self, report: PhotoReport, verdict: PhotoVerdict | None = None) -> ReportOutcome:
+        if verdict is None:
+            verdict = self._review_photo(report.photo)
         if verdict is PhotoVerdict.UNAVAILABLE:
             self._pending.append(report)
             return ReportOutcome.PENDING
+        # Reviewed: the photo bytes aren't needed in memory any more.
+        reviewed = replace(report, photo=b"")
+        if verdict is PhotoVerdict.REJECTED:
+            self._unverified.append(reviewed)
+            return ReportOutcome.UNVERIFIED
+        self._confirmed.append(reviewed)
         if self.status(report.segment) is SegmentStatus.BLOCKED:
             return ReportOutcome.VOTE_RECORDED
         self._set_status(report.segment, SegmentStatus.BLOCKED)

@@ -20,8 +20,7 @@ Put these in `backend/.env`, which is gitignored. Never commit keys.
 | Variable | Needed for | Required now? |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | `scripts/try_vision.py` (Claude vision) | Only to run the photo spike |
-
-The API server itself doesn't read any environment variables yet.
+| `LUMI_FRONTEND_ORIGINS` | CORS: comma-separated browser origins allowed to call the API | No; defaults to `http://localhost:3000` |
 
 ## Run
 
@@ -65,6 +64,21 @@ The response has these fields:
 | 404 | No route avoids the blocked sidewalks |
 | 422 | Invalid input, or a point more than 250 m from the nearest mapped intersection |
 
+`hazards` combines confirmed community reports (`app/reports.py`) with any hazards passed to `create_app` in tests.
+
+### Reports
+
+The full shapes are in [docs/team/api-contract.md](../docs/team/api-contract.md). Writes need an `X-User-Id` header (any stable string until login exists); without it they return `401`.
+
+| Endpoint | Success | Errors |
+|---|---|---|
+| `POST /reports` (multipart `lat`, `lon`, `photo`) | `201` with `outcome` `status_changed`, `vote_recorded`, `unverified` or `pending` | `401`, `413` photo over 5 MB, `415` not JPEG/PNG/WebP, `422` more than 250 m from any sidewalk |
+| `POST /segments/{segment_id}/votes` (JSON `blocked`, `lat`, `lon`) | `200` with `outcome` `vote_recorded`, `status_changed` or `photo_required` | `401`, `403` more than 50 m from the segment, `404` unknown segment, `422` |
+| `GET /segments/nearby?lat=&lon=` | `200`: reported segments within 50 m, closest first | `422` |
+| `GET /reports` | `200`: confirmed, unverified and pending photo reports, newest first | |
+
+A report is attached to the closest sidewalk segment, measured to the street's shape rather than to its intersections. No photo reviewer is wired in yet, so outside tests every photo report stays `pending` and doesn't affect routing. Reports are kept in memory and are lost on restart.
+
 ## How routing works
 
 The street graph is loaded once at startup and never modified. Hazards are kept in a separate dict, keyed by segment, and the same key covers both walking directions. On each request, a weight function in `app/routing.py` combines the graph and the hazards:
@@ -73,7 +87,7 @@ The street graph is loaded once at startup and never modified. Hazards are kept 
 - **Shortest:** cost = length.
 - **Safer / Accessible:** cost = length × (1 + `SAFER_RISK_WEIGHT` × risk). Risk is the highest severity reported on the segment, from 0 to 1.
 
-The hazards dict is empty for now: hazard reports aren't implemented, so all three modes return the same route.
+Hazards come from confirmed community reports, so until someone reports a blockage all three modes return the same route.
 
 ## Layout
 
@@ -81,7 +95,8 @@ The hazards dict is empty for now: hazard reports aren't implemented, so all thr
 app/
   config.py        coverage area, file paths, tuning constants
   routing.py       modes, Hazard, weight function, Dijkstra, point snapping
-  reports.py       report rules: photo review, one-tap votes, 4-user flip, abuse limit (in memory, no endpoints yet)
+  reports.py       report rules: photo review, one-tap votes, 4-user flip, abuse limit (in memory)
+  segments.py      segment lookup by id and nearest segment to a point
   main.py          FastAPI app factory (create_app) and endpoints
 scripts/
   build_graph.py   download the OSM walk network -> data/bu_walk.graphml
@@ -97,7 +112,7 @@ tests/             pytest suite on a small synthetic graph
 uv run pytest
 ```
 
-The tests build a tiny fake street network and pass it to `create_app(graph, hazards)`, so they don't load the real map or touch the network.
+The tests build a tiny fake street network and pass it to `create_app(graph, hazards, review_photo)` with a fake photo reviewer, so they don't load the real map, touch the network or call Claude.
 
 ## Scripts
 
