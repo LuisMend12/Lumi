@@ -106,3 +106,59 @@ def test_nearest_node_snaps_point_and_reports_distance(street_graph):
 
     assert node == "A"
     assert distance_m < 20
+
+
+def add_stairs(graph, u: str, v: str, length: float, highway="steps") -> None:
+    """Add a staircase between u and v, walkable in both directions."""
+    graph.add_edge(u, v, length=length, highway=highway)
+    graph.add_edge(v, u, length=length, highway=highway)
+
+
+def test_shortest_takes_a_stairs_shortcut(street_graph):
+    add_stairs(street_graph, "A", "D", 50.0)
+
+    route = find_route(street_graph, "A", "D", RouteMode.SHORTEST, hazards={})
+
+    assert route.nodes == ["A", "D"]
+
+
+def test_safer_takes_a_stairs_shortcut(street_graph):
+    add_stairs(street_graph, "A", "D", 50.0)
+
+    route = find_route(street_graph, "A", "D", RouteMode.SAFER, hazards={})
+
+    assert route.nodes == ["A", "D"]
+
+
+def test_accessible_avoids_a_stairs_shortcut(street_graph):
+    add_stairs(street_graph, "A", "D", 50.0)
+
+    route = find_route(street_graph, "A", "D", RouteMode.ACCESSIBLE, hazards={})
+
+    assert route.nodes == ["A", "B", "D"]
+
+
+def test_accessible_avoids_stairs_tagged_as_a_list(street_graph):
+    # OSMnx stores a list when a simplified edge merged ways with different tags.
+    add_stairs(street_graph, "A", "D", 50.0, highway=["footway", "steps"])
+
+    route = find_route(street_graph, "A", "D", RouteMode.ACCESSIBLE, hazards={})
+
+    assert route.nodes == ["A", "B", "D"]
+
+
+def test_accessible_uses_edges_with_other_highway_tags(street_graph):
+    add_stairs(street_graph, "A", "D", 50.0, highway=["footway", "residential"])
+
+    route = find_route(street_graph, "A", "D", RouteMode.ACCESSIBLE, hazards={})
+
+    assert route.nodes == ["A", "D"]
+
+
+def test_accessible_has_no_route_when_only_stairs_connect(street_graph):
+    # Both ways out of A are staircases.
+    add_stairs(street_graph, "A", "B", 100.0)
+    add_stairs(street_graph, "A", "C", 150.0)
+
+    with pytest.raises(NoRouteError):
+        find_route(street_graph, "A", "D", RouteMode.ACCESSIBLE, hazards={})
