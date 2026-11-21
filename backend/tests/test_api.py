@@ -49,6 +49,12 @@ def test_route_avoids_blocked_segment(blocked_client):
     assert response.json()["distance_m"] == pytest.approx(300.0)
 
 
+def test_frontend_origin_is_allowed_by_cors(client):
+    response = client.get("/health", headers={"Origin": "http://localhost:3000"})
+
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+
+
 def test_route_rejects_unknown_mode(client):
     response = client.get("/route", params={**A_TO_D, "mode": "fastest"})
 

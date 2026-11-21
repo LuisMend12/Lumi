@@ -5,9 +5,10 @@ from typing import Annotated
 
 import networkx as nx
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from app.config import GRAPH_PATH, MAX_SNAP_DISTANCE_M
+from app.config import FRONTEND_ORIGINS, GRAPH_PATH, MAX_SNAP_DISTANCE_M
 from app.routing import Hazards, NoRouteError, RouteMode, find_route, nearest_node
 
 Latitude = Annotated[float, Query(ge=-90, le=90)]
@@ -44,6 +45,7 @@ def create_app(graph: nx.DiGraph | None = None, hazards: Hazards | None = None) 
         yield
 
     app = FastAPI(title="Lumi API", lifespan=lifespan)
+    app.add_middleware(CORSMiddleware, allow_origins=FRONTEND_ORIGINS, allow_methods=["GET"])
 
     @app.get("/health")
     def health() -> dict:

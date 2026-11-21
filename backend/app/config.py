@@ -19,6 +19,9 @@ MAX_SNAP_DISTANCE_M = 250
 # (1 + SAFER_RISK_WEIGHT) times its length. Starting value; tune with data.
 SAFER_RISK_WEIGHT = 4.0
 
+# Browser origins allowed to call the API (the Next.js dev server).
+FRONTEND_ORIGINS = ["http://localhost:3000"]
+
 # Community reports (app/reports.py).
 # Different users needed to flip a segment between blocked and open.
 VOTES_TO_FLIP = 4

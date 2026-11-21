@@ -99,12 +99,35 @@ def find_route(
         raise NoRouteError(f"No route from {start} to {end} avoids blocked sidewalks") from error
 
     segments = list(zip(nodes, nodes[1:]))
+    coordinates = [_lat_lon(graph, nodes[0])]
+    for u, v in segments:
+        coordinates.extend(_segment_shape(graph, u, v)[1:])
     return Route(
         nodes=nodes,
-        coordinates=[(graph.nodes[n]["y"], graph.nodes[n]["x"]) for n in nodes],
+        coordinates=coordinates,
         distance_m=sum(graph.edges[u, v]["length"] for u, v in segments),
         hazards=[h for u, v in segments for h in hazards.get(segment_key(u, v), [])],
     )
+
+
+def _lat_lon(graph: nx.DiGraph, node: Hashable) -> tuple[float, float]:
+    return (graph.nodes[node]["y"], graph.nodes[node]["x"])
+
+
+def _segment_shape(graph: nx.DiGraph, u: Hashable, v: Hashable) -> list[tuple[float, float]]:
+    """Points along the street from u to v; curved if OSM stored the shape."""
+    geometry = graph.edges[u, v].get("geometry")
+    if geometry is None:
+        return [_lat_lon(graph, u), _lat_lon(graph, v)]
+    points = [(lat, lon) for lon, lat in geometry.coords]
+    start = _lat_lon(graph, u)
+    if _squared_gap(points[-1], start) < _squared_gap(points[0], start):
+        points.reverse()
+    return points
+
+
+def _squared_gap(a: tuple[float, float], b: tuple[float, float]) -> float:
+    return (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2
 
 
 def nearest_node(graph: nx.DiGraph, lat: float, lon: float) -> tuple[Hashable, float]:

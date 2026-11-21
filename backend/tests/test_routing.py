@@ -1,4 +1,5 @@
 import pytest
+from shapely.geometry import LineString
 
 from app.routing import Hazard, NoRouteError, RouteMode, find_route, nearest_node, segment_key
 
@@ -70,6 +71,29 @@ def test_route_includes_coordinates_in_order(street_graph):
     route = find_route(street_graph, "A", "D", RouteMode.SHORTEST, hazards={})
 
     assert route.coordinates == [(42.3500, -71.1080), (42.3500, -71.1068), (42.3500, -71.1056)]
+
+
+def test_route_follows_curved_street_geometry(street_graph):
+    # A->B bends south through a midpoint; OSM stores geometry as (lon, lat).
+    street_graph.edges["A", "B"]["geometry"] = LineString([(-71.1080, 42.3500), (-71.1074, 42.3497), (-71.1068, 42.3500)])
+
+    route = find_route(street_graph, "A", "D", RouteMode.SHORTEST, hazards={})
+
+    assert route.coordinates == [
+        (42.3500, -71.1080),
+        (42.3497, -71.1074),
+        (42.3500, -71.1068),
+        (42.3500, -71.1056),
+    ]
+
+
+def test_curved_geometry_stored_backwards_is_reversed(street_graph):
+    # Geometry drawn B->A on the A->B edge must still walk A->B.
+    street_graph.edges["A", "B"]["geometry"] = LineString([(-71.1068, 42.3500), (-71.1074, 42.3497), (-71.1080, 42.3500)])
+
+    route = find_route(street_graph, "A", "D", RouteMode.SHORTEST, hazards={})
+
+    assert route.coordinates[:3] == [(42.3500, -71.1080), (42.3497, -71.1074), (42.3500, -71.1068)]
 
 
 def test_every_mode_has_a_user_facing_description():
