@@ -53,6 +53,11 @@ class Hazard:
     severity: float  # 0.0 (minor) to 1.0 (severe)
     blocked: bool  # True = nobody can pass; every mode skips the segment
 
+    def __post_init__(self) -> None:
+        # Written so NaN fails too: every comparison with NaN is False.
+        if not 0 <= self.severity <= 1:
+            raise ValueError(f"Hazard severity must be between 0 and 1, got {self.severity!r}")
+
 
 @dataclass(frozen=True)
 class Route:
