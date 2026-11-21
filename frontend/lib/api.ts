@@ -4,10 +4,17 @@ export const ROUTE_MODES: RouteMode[] = ["shortest", "safer", "accessible"];
 
 export type LatLon = [number, number];
 
+export type Verification = "confirmed" | "unverified" | "pending";
+
+// Fields marked optional are new in docs/team/api-contract.md; the current
+// backend doesn't send them yet, so the UI must work without them.
 export interface Hazard {
   kind: string;
   severity: number;
   blocked: boolean;
+  segment_id?: string;
+  location?: LatLon;
+  verification?: Verification;
 }
 
 export interface Route {
@@ -16,6 +23,8 @@ export interface Route {
   distance_m: number;
   coordinates: LatLon[];
   hazards: Hazard[];
+  snapped_start?: LatLon;
+  snapped_end?: LatLon;
 }
 
 export type RouteOutcome =
@@ -24,7 +33,14 @@ export type RouteOutcome =
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
+// Serve sample data in the API contract's shape instead of calling the backend.
+export const USE_MOCKS = process.env.NEXT_PUBLIC_USE_MOCKS === "true";
+
 export async function fetchRoute(start: LatLon, end: LatLon, mode: RouteMode): Promise<RouteOutcome> {
+  if (USE_MOCKS) {
+    const { mockRoute } = await import("./mocks");
+    return mockRoute(start, end, mode);
+  }
   const params = new URLSearchParams({
     start_lat: String(start[0]),
     start_lon: String(start[1]),

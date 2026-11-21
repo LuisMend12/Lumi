@@ -2,8 +2,8 @@
 
 import dynamic from "next/dynamic";
 import { useState } from "react";
-import { fetchRoute, ROUTE_MODES, type LatLon, type RouteMode, type RouteOutcome } from "@/lib/api";
-import { MODE_STYLES, walkingMinutes } from "@/lib/modes";
+import { fetchRoute, ROUTE_MODES, USE_MOCKS, type LatLon, type RouteMode, type RouteOutcome } from "@/lib/api";
+import { ACCESSIBLE_LIMITATION, MODE_STYLES, walkingMinutes } from "@/lib/modes";
 
 // Leaflet touches `window`, so the map only renders in the browser.
 const RouteMap = dynamic(() => import("@/components/RouteMap"), {
@@ -35,6 +35,7 @@ export default function Home() {
   }
 
   const hint = !start ? "Tap the map to set your start." : !end ? "Now tap your destination." : null;
+  const sharedError = sameErrorForAllModes(outcomes);
 
   return (
     <main className="flex h-dvh flex-col md:flex-row">
@@ -44,10 +45,21 @@ export default function Home() {
           <p className="text-sm text-[var(--muted)]">Smarter paths. Safer winters.</p>
         </header>
 
+        {USE_MOCKS && (
+          <p className="rounded-lg border-2 border-dashed border-amber-500 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">
+            Mock data: routes and hazards are simulated, not real reports.
+          </p>
+        )}
         {hint && <p className="rounded-lg bg-[var(--ice)] px-3 py-2 text-sm text-[var(--navy)]">{hint}</p>}
         {isLoading && <p className="text-sm text-[var(--muted)]">Finding routes…</p>}
 
-        {end && !isLoading && (
+        {sharedError && !isLoading && (
+          <p role="alert" className="rounded-lg border-l-4 border-red-600 bg-red-50 px-3 py-2 text-sm text-red-900">
+            {sharedError} Tap the map to start again.
+          </p>
+        )}
+
+        {end && !isLoading && !sharedError && (
           <ul className="flex flex-col gap-2">
             {ROUTE_MODES.map((mode) => (
               <ModeCard
@@ -109,10 +121,21 @@ function ModeCard({ mode, outcome, isSelected, onSelect }: ModeCardProps) {
           <span className="font-semibold text-[var(--navy)]">{style.label}</span>
           <span className="ml-auto text-sm text-[var(--muted)]">{summary}</span>
         </span>
+        {mode === "accessible" && (
+          <span className="mt-1 block text-xs font-medium text-amber-800">{ACCESSIBLE_LIMITATION}</span>
+        )}
         {isSelected && outcome?.status === "ok" && (
           <span className="mt-2 block text-sm leading-snug text-[var(--navy)]">{outcome.route.mode_description}</span>
         )}
       </button>
     </li>
   );
+}
+
+// e.g. "too close" or "outside coverage": the same for every mode, so show it once.
+function sameErrorForAllModes(outcomes: Outcomes): string | null {
+  const results = ROUTE_MODES.map((mode) => outcomes[mode]);
+  if (results.some((outcome) => outcome?.status !== "error")) return null;
+  const messages = new Set(results.map((outcome) => (outcome?.status === "error" ? outcome.message : "")));
+  return messages.size === 1 ? [...messages][0] : null;
 }

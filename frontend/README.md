@@ -25,6 +25,7 @@ npm run dev   # http://localhost:3000
 | Variable (in `.env.local`) | Default | Purpose |
 |---|---|---|
 | `NEXT_PUBLIC_API_URL` | `http://127.0.0.1:8000` | Where the backend runs |
+| `NEXT_PUBLIC_USE_MOCKS` | unset | Set to `true` to use sample data shaped like [the API contract](../docs/team/api-contract.md) instead of the backend. The page shows a "Mock data" banner while this is on |
 
 `NEXT_PUBLIC_*` values are bundled into the browser code, so never put secrets in them.
 
@@ -35,7 +36,8 @@ app/page.tsx             page state: clicked points, fetched routes, selected mo
 app/globals.css          winter palette (CSS variables)
 components/RouteMap.tsx  Leaflet map, coverage circle, route lines (browser-only, loaded with ssr: false)
 lib/api.ts               typed calls to GET /route, readable error messages
-lib/modes.ts             coverage area, per-mode colors and dash patterns, walking time
+lib/mocks.ts             contract-shaped sample routes and hazards (NEXT_PUBLIC_USE_MOCKS)
+lib/modes.ts             coverage area, per-mode styles, verification labels, walking time
 ```
 
 The coverage center and radius in `lib/modes.ts` must match `backend/app/config.py`.
