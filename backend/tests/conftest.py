@@ -32,3 +32,12 @@ def street_graph() -> nx.DiGraph:
         graph.add_edge(u, v, length=length)
         graph.add_edge(v, u, length=length)
     return graph
+
+
+@pytest.fixture(autouse=True)
+def no_real_database(monkeypatch):
+    """Keep create_app() on the in-memory store even if PGHOST is set in the shell.
+
+    Postgres tests opt in with LUMI_TEST_DATABASE_URL instead (see test_storage.py).
+    """
+    monkeypatch.delenv("PGHOST", raising=False)

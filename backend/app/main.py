@@ -25,6 +25,7 @@ from app.routing import (
 )
 from app.routing import segment_id as make_segment_id
 from app.segments import SegmentIndex
+from app.storage import MemoryReportStore, PostgresReportStore, StoredReport, default_store, new_vote_id, replay
 
 logger = logging.getLogger(__name__)
 
@@ -115,25 +116,48 @@ def create_app(
     graph: nx.DiGraph | None = None,
     hazards: Hazards | None = None,
     review_photo: PhotoReviewer | None = None,
+    store: PostgresReportStore | MemoryReportStore | None = None,
 ) -> FastAPI:
-    """`hazards` are fixed extra hazards (tests use them); confirmed reports are added on top."""
+    """`hazards` are fixed extra hazards (tests use them); confirmed reports are added on top.
+
+    `store` defaults to Tiger Data if PGHOST is set, else memory (see app/storage.py).
+    """
     reviewer = review_photo if review_photo is not None else unconfigured_reviewer()
     static_hazards = hazards if hazards is not None else {}
     # Set at startup by `lifespan`; the endpoints below read them.
     street_graph: nx.DiGraph
     segments: SegmentIndex
     reports: SegmentReports
+    report_store: PostgresReportStore | MemoryReportStore  # every write goes here first, then to `reports`
     # SegmentReports isn't thread-safe and FastAPI runs sync endpoints in a
-    # thread pool, so every read and write of `reports` holds this lock.
+    # thread pool, so every read and write of `reports` holds this lock. Writes
+    # also hold it while saving to the store, so stored order = applied order.
     lock = threading.Lock()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        nonlocal street_graph, segments, reports
+        nonlocal street_graph, segments, reports, report_store
         street_graph = graph if graph is not None else load_street_graph()
         segments = SegmentIndex(street_graph)
         reports = SegmentReports(review_photo=reviewer)
-        yield
+        report_store = store if store is not None else default_store()
+        replayed = replay(report_store.all(), reports, segments)  # stored statuses; never calls the reviewer
+        logger.info("Rebuilt segment status from %d stored reports", replayed)
+        try:
+            yield
+        finally:
+            if store is None:  # we opened it, so we close it
+                report_store.close()
+
+    def save(row: StoredReport) -> None:
+        """Store first: if saving fails, the report isn't applied and the user can retry."""
+        try:
+            report_store.add(row)
+        except Exception as error:
+            logger.exception("Couldn't save report %s", row.report_id)
+            raise HTTPException(
+                status_code=503, detail="Lumi couldn't save your report right now. Please try again."
+            ) from error
 
     app = FastAPI(title="Lumi API", lifespan=lifespan)
     app.add_middleware(
@@ -187,7 +211,6 @@ def create_app(
         lon: Annotated[float, Form(ge=-180, le=180)],
         photo: Annotated[UploadFile, File()],
     ) -> ReportOut:
-        reported_at = datetime.now(UTC)
         data = photo.file.read(MAX_PHOTO_BYTES + 1)
         if len(data) > MAX_PHOTO_BYTES:
             raise HTTPException(status_code=413, detail="The photo is larger than 5 MB. Send a smaller one.")
@@ -204,6 +227,9 @@ def create_app(
         report_id = new_report_id()
         segment = _key(segments, sid)
         with lock:
+            # Timestamped inside the lock, so time order matches the order the rules saw.
+            reported_at = datetime.now(UTC)
+            save(StoredReport(report_id, sid, user_id, lat, lon, True, reported_at, status=verdict, photo=data))
             outcome = reports.report_blocked_with_photo(
                 segment, user_id, data, reported_at, report_id=report_id, verdict=verdict
             )
@@ -225,7 +251,12 @@ def create_app(
             )
         segment = _key(segments, segment_id)
         with lock:
-            outcome = reports.vote(segment, user_id, body.blocked, datetime.now(UTC))
+            now = datetime.now(UTC)
+            if body.blocked and reports.needs_photo(user_id, now):
+                # Refused, so nothing to store: replay would refuse it again anyway.
+                return VoteOut(outcome="photo_required", segment_status=reports.status(segment))
+            save(StoredReport(new_vote_id(), segment_id, user_id, body.lat, body.lon, body.blocked, now))
+            outcome = reports.vote(segment, user_id, body.blocked, now)
             status = reports.status(segment)
         return VoteOut(outcome=outcome.value, segment_status=status)
 

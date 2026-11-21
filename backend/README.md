@@ -21,6 +21,10 @@ Put these in `backend/.env`, which is gitignored. Never commit keys.
 |---|---|---|
 | `ANTHROPIC_API_KEY` | `scripts/try_vision.py` (Claude vision) | Only to run the photo spike |
 | `LUMI_FRONTEND_ORIGINS` | CORS: comma-separated browser origins allowed to call the API | No; defaults to `http://localhost:3000` |
+| `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`, `PGSSLMODE` | Storing reports in Tiger Data (standard libpq names) | No. Without `PGHOST`, reports are kept in memory and lost on restart |
+| `LUMI_TEST_DATABASE_URL` | Running the Postgres store tests against a throwaway TimescaleDB database | No; those tests are skipped |
+
+To load `.env`, run the server with `uv run --env-file .env uvicorn app.main:app --reload`.
 
 ## Run
 
@@ -77,7 +81,13 @@ The full shapes are in [docs/team/api-contract.md](../docs/team/api-contract.md)
 | `GET /segments/nearby?lat=&lon=` | `200`: reported segments within 50 m, closest first | `422` |
 | `GET /reports` | `200`: confirmed, unverified and pending photo reports, newest first | |
 
-A report is attached to the closest sidewalk segment, measured to the street's shape rather than to its intersections. No photo reviewer is wired in yet, so outside tests every photo report stays `pending` and doesn't affect routing. Reports are kept in memory and are lost on restart.
+A report is attached to the closest sidewalk segment, measured to the street's shape rather than to its intersections. No photo reviewer is wired in yet, so outside tests every photo report stays `pending` and doesn't affect routing.
+
+### Storage
+
+Every photo report and counted vote is one row in Tiger Data's `reports` table, a TimescaleDB hypertable on `reported_at`. A photo report's row holds its `status` (`confirmed`, `unverified` or `pending`) and the photo itself; a vote's `status` is empty. Each write is saved before it's applied in memory; if saving fails, the API returns `503` and nothing changes. On startup, `app/storage.py` creates the table if it's missing, then replays the rows oldest first with their stored statuses, so segment status survives a restart and the photo reviewer isn't called again.
+
+The schema is `SCHEMA` in `app/storage.py`. Reports don't expire yet.
 
 ## How routing works
 
@@ -97,6 +107,7 @@ app/
   routing.py       modes, Hazard, weight function, Dijkstra, point snapping
   reports.py       report rules: photo review, one-tap votes, 4-user flip, abuse limit (in memory)
   segments.py      segment lookup by id and nearest segment to a point
+  storage.py       stored reports: Tiger Data and in-memory stores, schema, replay on startup
   main.py          FastAPI app factory (create_app) and endpoints
 scripts/
   build_graph.py   download the OSM walk network -> data/bu_walk.graphml
@@ -112,7 +123,7 @@ tests/             pytest suite on a small synthetic graph
 uv run pytest
 ```
 
-The tests build a tiny fake street network and pass it to `create_app(graph, hazards, review_photo)` with a fake photo reviewer, so they don't load the real map, touch the network or call Claude.
+The tests build a tiny fake street network and pass it to `create_app(graph, hazards, review_photo, store)` with a fake photo reviewer and an in-memory store, so they don't load the real map, touch the network, call Claude or connect to a database. The Postgres store tests run only when `LUMI_TEST_DATABASE_URL` is set; they drop and recreate the `reports` table, so point it at a throwaway database.
 
 ## Scripts
 
