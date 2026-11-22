@@ -1,9 +1,7 @@
 # Lumi API contract
 
-**Status:** proposed. Both of you must agree on it before the report endpoints and report UI go past mocks.
+**Status:** implemented. Use the running backend's `/docs` for the generated schema.
 **Why it exists:** the backend and frontend are built at the same time. The frontend codes against this contract using mock data, and the backend makes it real. If either side needs to change it, edit this file in a PR that both of you review.
-
-`GET /route` and `GET /health` already exist. Everything marked **new** is planned.
 
 ## Conventions
 
@@ -13,9 +11,9 @@
 - Writes (`POST /reports`, `POST /segments/{segment_id}/votes`) need sign-in (#14): send `Authorization: Bearer <token>`, where the token comes from Clerk's `getToken()`. The backend checks it against Clerk's public keys and uses the token's `sub` (the Clerk user ID) as the user. A missing or invalid token gets `401` with a readable `detail`. If the server has no Clerk settings, writes get `503`. Reads (`GET`) need no sign-in.
 - Errors come back as `{"detail": "<message a person can read>"}` with the status codes listed under each endpoint.
 
-## `GET /route` (exists; small additions)
+## `GET /route`
 
-The response stays as today, with these additions:
+Example response:
 
 ```json
 {
@@ -41,7 +39,7 @@ The response stays as today, with these additions:
 - **New** error: `422` "Start and destination are too close" when both points snap to the same intersection.
 - **New** `notice` (string or `null`): set in **Accessible** mode when the start or destination is reachable only by stairs (#33). Two points already joined by a step-free path, such as two spots on the same plaza, are never moved. The route then starts or ends at the nearest point of the step-free network, at most 100 m away. Example: `"Your start is only reachable by stairs, so the step-free route starts 20 m away."` `snapped_start` / `snapped_end` move to that point, so the dashed leg from the tapped point shows the gap. If the nearest step-free point is more than 100 m away, `404` with `"No step-free route found: your start is only reachable by stairs, and the nearest step-free point is 167 m away."`
 
-## `POST /reports` (new): report a blocked sidewalk with a photo
+## `POST /reports`: report a blocked sidewalk with a photo
 
 The request is `multipart/form-data` with these fields:
 
@@ -65,14 +63,14 @@ The request is `multipart/form-data` with these fields:
 - `status_changed`: the agent confirmed the photo, so the segment is now blocked.
 - `vote_recorded`: the segment was already blocked.
 - `unverified`: the agent didn't see a blockage. The report is shown on the map as unverified and doesn't affect routing.
-- `pending`: the agent couldn't review the photo right now. It will be retried, and the report doesn't affect routing meanwhile.
+- `pending`: the agent couldn't review the photo right now. The report doesn't affect routing while it is pending.
 
 Errors:
 - `413`: the photo is too large.
 - `415`: the file type isn't supported.
 - `422`: the point is outside the coverage area.
 
-## `POST /segments/{segment_id}/votes` (new): one-tap "Blocked or unblocked?"
+## `POST /segments/{segment_id}/votes`: one-tap "Blocked or unblocked?"
 
 ```json
 { "blocked": false, "lat": 42.3497, "lon": -71.1001 }
@@ -86,7 +84,7 @@ Errors:
 - `403`: the user isn't within 50 m of the segment.
 - `404`: the segment doesn't exist.
 
-## `GET /segments/nearby?lat=&lon=` (new): what to ask the user about
+## `GET /segments/nearby?lat=&lon=`: what to ask the user about
 
 This returns reported segments within 50 m, so the app can show the one-tap prompt.
 
@@ -96,7 +94,7 @@ This returns reported segments within 50 m, so the app can show the one-tap prom
 ]
 ```
 
-## `GET /reports` (new): everything to draw on the map
+## `GET /reports`: everything to draw on the map
 
 ```json
 [
