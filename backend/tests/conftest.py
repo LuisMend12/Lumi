@@ -9,6 +9,8 @@ Layout (two ways from A to D):
 Every street is walkable in both directions, like a real sidewalk graph.
 """
 
+import socket
+
 import networkx as nx
 import pytest
 
@@ -32,6 +34,20 @@ def street_graph() -> nx.DiGraph:
         graph.add_edge(u, v, length=length)
         graph.add_edge(v, u, length=length)
     return graph
+
+
+@pytest.fixture(autouse=True)
+def no_real_mastra(monkeypatch):
+    """create_app() uses the Mastra reviewer by default; point it at a closed port.
+
+    That way no test reaches a Mastra service that happens to run on this machine.
+    Tests that need a reviewer inject a fake, or set LUMI_MASTRA_URL to the
+    `mastra` fixture's local server.
+    """
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        closed_port = sock.getsockname()[1]
+    monkeypatch.setenv("LUMI_MASTRA_URL", f"http://127.0.0.1:{closed_port}")
 
 
 @pytest.fixture(autouse=True)
