@@ -24,14 +24,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <ClerkProvider>
-      <html lang="en">
-        <body
-          className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-        >
-          {children}
-        </body>
-      </html>
-    </ClerkProvider>
+    <html lang="en">
+      <body
+        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+      >
+        {/* Clerk Core 3 (v7) wants the provider inside <body>, not wrapping <html>. */}
+        <ClerkProvider>{children}</ClerkProvider>
+      </body>
+    </html>
   );
 }
