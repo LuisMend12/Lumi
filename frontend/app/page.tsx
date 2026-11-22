@@ -18,6 +18,7 @@ import { fetchRoute, ROUTE_MODES, USE_MOCKS, type LatLon, type RouteMode, type R
 import { isDemoMode } from "@/lib/demo-api";
 import { LANDMARKS } from "@/lib/landmarks";
 import { getLocation } from "@/lib/device";
+import { createRequestTracker } from "@/lib/latest";
 import { ACCESSIBLE_LIMITATION, MODE_STYLES, MODE_SUMMARIES, walkingMinutes } from "@/lib/modes";
 import { VOTE_OUTCOME_TEXT } from "@/lib/reporting";
 import {
@@ -90,6 +91,9 @@ export default function Home() {
       // storage blocked: it's closed for this visit only
     }
   }
+  // A My location lookup can take seconds. Any newer start (another choice, a map tap,
+  // New route) wins, so a late GPS result or error can't override it (#67).
+  const [startChoice] = useState(createRequestTracker);
 
   // Reports to draw on the map, loaded once on open.
   useEffect(() => {
@@ -165,6 +169,9 @@ export default function Home() {
   // results from an older request are dropped (#54, #59).
   const pointsRef = useRef<{ start: LatLon | null; end: LatLon | null }>({ start: null, end: null });
   const routeRequestRef = useRef(0);
+  // The request number of a load the visitor asked for while it runs, else null.
+  const explicitLoadRef = useRef<number | null>(null);
+  const reportsRequestRef = useRef(0);
 
   function setPoints(nextStart: LatLon | null, nextEnd: LatLon | null) {
     pointsRef.current = { start: nextStart, end: nextEnd };
@@ -174,18 +181,29 @@ export default function Home() {
   }
 
   async function loadRoutes(from: LatLon, to: LatLon, { quiet = false } = {}) {
+    // A background refresh never replaces a load the visitor asked for that's still running.
+    if (quiet && explicitLoadRef.current === routeRequestRef.current) return;
     const request = ++routeRequestRef.current;
-    if (!quiet) setIsLoading(true);
+    if (!quiet) {
+      explicitLoadRef.current = request;
+      setIsLoading(true);
+    }
     const results = await Promise.all(ROUTE_MODES.map((mode) => fetchRoute(from, to, mode)));
     if (request !== routeRequestRef.current) return; // the user picked new points meanwhile
+    explicitLoadRef.current = null;
+    // A background refresh that couldn't reach the server keeps the routes on screen:
+    // a network blip shouldn't wipe a good route. Loads the visitor asked for show the error.
+    if (quiet && results.some((outcome) => outcome.status === "error" && outcome.offline)) return;
     setOutcomes(Object.fromEntries(ROUTE_MODES.map((mode, i) => [mode, results[i]])));
     setIsLoading(false);
   }
 
   // A sidewalk may have changed status: show the new reports and recompute the routes on screen.
   async function refreshAfterChange({ quiet = false } = {}) {
+    const reportsRequest = ++reportsRequestRef.current;
     const result = await fetchReports();
-    if (result.ok) {
+    // An older reports response that arrives late doesn't overwrite a newer one.
+    if (result.ok && reportsRequest === reportsRequestRef.current) {
       setReports(result.data);
       setReportsUpdatedAt(new Date());
     }
@@ -230,6 +248,7 @@ export default function Home() {
   async function handleMapClick(point: LatLon) {
     const { start: current, end: currentEnd } = pointsRef.current;
     if (!current) {
+      supersedeStartChoice();
       setFromChoice(MAP_POINT);
       await applyPoints(point, currentEnd);
       return;
@@ -241,6 +260,7 @@ export default function Home() {
     }
     // A finished route only changes on purpose: Change start / Change end / New route (#66).
     if (editing === "start") {
+      supersedeStartChoice();
       setFromChoice(MAP_POINT);
       await applyPoints(point, currentEnd);
     } else if (editing === "end") {
@@ -250,7 +270,7 @@ export default function Home() {
   }
 
   // A picker choice becomes a point: a landmark, or My location (read only on this tap).
-  async function pointForChoice(choice: string): Promise<LatLon | null> {
+  async function pointForChoice(choice: string, isCurrent: () => boolean = () => true): Promise<LatLon | null> {
     if (choice === MY_LOCATION) {
       setIsLocating(true);
       try {
@@ -258,18 +278,29 @@ export default function Home() {
         setIsNearbyOn(true); // the visitor just shared their location (#65)
         return location;
       } finally {
-        setIsLocating(false);
+        if (isCurrent()) setIsLocating(false);
       }
     }
     return LANDMARKS.find((landmark) => landmark.id === choice)?.point ?? null;
   }
 
+  // Any lookup for the start still in flight is now stale.
+  function supersedeStartChoice() {
+    startChoice.cancel();
+    setIsLocating(false);
+  }
+
   async function handleFromChange(choice: string) {
     const previous = fromChoice;
+    setIsLocating(false);
+    const isCurrent = startChoice.begin();
     setFromChoice(choice);
     try {
-      await applyPoints(await pointForChoice(choice), pointsRef.current.end);
+      const point = await pointForChoice(choice, isCurrent);
+      if (!isCurrent()) return; // a newer start was picked while we waited for the location
+      await applyPoints(point, pointsRef.current.end);
     } catch (error: unknown) {
+      if (!isCurrent()) return;
       setFromChoice(previous);
       setPickerError(error instanceof Error ? error.message : "Couldn't get your location.");
     }
@@ -286,6 +317,7 @@ export default function Home() {
   });
 
   function startNewRoute() {
+    supersedeStartChoice();
     setFromChoice("");
     setToChoice("");
     void applyPoints(null, null);
@@ -456,7 +488,10 @@ export default function Home() {
           notice={locationNotice}
           onChange={(isOn) => {
             setIsNearbyOn(isOn);
-            if (!isOn) setLocationNotice(null);
+            if (!isOn) {
+              setLocationNotice(null);
+              setNearby(null); // don't flash an old sidewalk question when checks are turned back on
+            }
           }}
         />
 

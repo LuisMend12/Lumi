@@ -1,7 +1,15 @@
-import { ROUTE_MODES } from "@/lib/api";
+import { ROUTE_MODES, type Verification } from "@/lib/api";
 import { AMBER, MODE_STYLES, NAVY, VERIFICATION_STYLES } from "@/lib/modes";
 
 const SWATCH_WIDTH = 32;
+
+// Legend wording per verification state. The map labels ("Unverified report", "Under review")
+// read on their own, so the legend doesn't just append " report" to them.
+const REPORT_LEGEND_TEXT: Record<Verification, string> = {
+  confirmed: "Confirmed report",
+  unverified: "Unverified report",
+  pending: "Report under review",
+};
 
 function LineSwatch({
   color,
@@ -56,7 +64,7 @@ export default function MapLegend() {
         {(["confirmed", "unverified", "pending"] as const).map((verification) => (
           <li key={verification} className="flex items-center gap-2">
             <DotSwatch {...VERIFICATION_STYLES[verification]} />
-            {VERIFICATION_STYLES[verification].label} report
+            {REPORT_LEGEND_TEXT[verification]}
           </li>
         ))}
         <li className="flex items-center gap-2">
