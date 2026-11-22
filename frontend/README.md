@@ -22,9 +22,13 @@ npm run dev   # http://localhost:3000
 
 ## Configuration
 
+Copy `.env.example` to `.env.local` and fill it in. The Clerk keys are required: without them the app won't start.
+
 | Variable (in `.env.local`) | Default | Purpose |
 |---|---|---|
 | `NEXT_PUBLIC_API_URL` | `http://127.0.0.1:8000` | Where the backend runs |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | none (required) | Clerk sign-in. Public; it ships to the browser |
+| `CLERK_SECRET_KEY` | none (required) | Clerk server key. **Secret**: never commit or share it. Clerk members copy it from the dashboard |
 | `NEXT_PUBLIC_USE_MOCKS` | unset | Set to `true` to use sample data shaped like [the API contract](../docs/team/api-contract.md) instead of the backend. The page shows a "Mock data" banner while this is on |
 
 `NEXT_PUBLIC_*` values are bundled into the browser code, so never put secrets in them.

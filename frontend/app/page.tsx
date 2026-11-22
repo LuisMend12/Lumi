@@ -1,5 +1,6 @@
 "use client";
 
+import { SignInButton, SignedIn, SignedOut, UserButton, useAuth, useClerk } from "@clerk/nextjs";
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import NearbyPrompt from "@/components/NearbyPrompt";
@@ -27,6 +28,8 @@ const RouteMap = dynamic(() => import("@/components/RouteMap"), {
 type Outcomes = Partial<Record<RouteMode, RouteOutcome>>;
 
 export default function Home() {
+  const { isSignedIn, userId } = useAuth();
+  const { openSignIn } = useClerk();
   const [start, setStart] = useState<LatLon | null>(null);
   const [end, setEnd] = useState<LatLon | null>(null);
   const [outcomes, setOutcomes] = useState<Outcomes>({});
@@ -98,10 +101,14 @@ export default function Home() {
 
   async function handleVote(blocked: boolean) {
     if (!nearby) return;
+    if (!isSignedIn || !userId) {
+      openSignIn(); // browsing is open; answering needs a real account (4 different people)
+      return;
+    }
     const segmentId = nearby.segment_id;
     setIsVoting(true);
     try {
-      const result = await voteOnSegment(segmentId, blocked, await getLocation());
+      const result = await voteOnSegment(userId, segmentId, blocked, await getLocation());
       if (!result.ok) {
         setVoteMessages((messages) => ({ ...messages, [segmentId]: result.message }));
       } else if (result.data.outcome === "photo_required") {
@@ -120,6 +127,10 @@ export default function Home() {
   }
 
   function openReportSheet() {
+    if (!isSignedIn) {
+      openSignIn();
+      return;
+    }
     setSheetNotice(null);
     setIsSheetOpen(true);
   }
@@ -132,9 +143,24 @@ export default function Home() {
   return (
     <main className="flex h-dvh flex-col md:flex-row">
       <section className="order-2 flex max-h-[45dvh] flex-col gap-4 overflow-y-auto bg-white p-4 shadow-[0_-8px_24px_rgba(16,42,67,0.12)] md:order-1 md:max-h-none md:w-96 md:p-6 md:shadow-[8px_0_24px_rgba(16,42,67,0.08)]">
-        <header>
-          <h1 className="text-3xl font-semibold tracking-tight text-[var(--navy)]">Lumi</h1>
-          <p className="text-sm text-[var(--muted)]">Smarter paths. Safer winters.</p>
+        <header className="flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-3xl font-semibold tracking-tight text-[var(--navy)]">Lumi</h1>
+            <p className="text-sm text-[var(--muted)]">Smarter paths. Safer winters.</p>
+          </div>
+          <SignedOut>
+            <SignInButton mode="modal">
+              <button
+                type="button"
+                className="rounded-full border-2 border-[var(--navy)] px-4 py-1.5 text-sm font-semibold text-[var(--navy)] hover:bg-[var(--ice)]"
+              >
+                Sign in
+              </button>
+            </SignInButton>
+          </SignedOut>
+          <SignedIn>
+            <UserButton />
+          </SignedIn>
         </header>
 
         {USE_MOCKS && (
@@ -191,8 +217,13 @@ export default function Home() {
             onDismiss={() => setDismissedSegment(promptSegment.segment_id)}
           />
         )}
-        {isSheetOpen ? (
-          <ReportSheet notice={sheetNotice} onClose={() => setIsSheetOpen(false)} onReported={refreshAfterChange} />
+        {isSheetOpen && userId ? (
+          <ReportSheet
+            userId={userId}
+            notice={sheetNotice}
+            onClose={() => setIsSheetOpen(false)}
+            onReported={refreshAfterChange}
+          />
         ) : (
           <button
             type="button"
