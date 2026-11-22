@@ -2,16 +2,22 @@
 .env
 .env.*
 *.env
+!.env.example
+tiger/
 
 # Python
 .venv/
 __pycache__/
 *.pyc
 .pytest_cache/
+# OSMnx download cache (scripts/build_graph.py); the graph in backend/data/ stays committed
+backend/cache/
 
 # Node
 node_modules/
 .next/
+# Mastra build output (mastra dev / mastra build)
+.mastra/
 
 # Local tool state
 .claude/settings.local.json

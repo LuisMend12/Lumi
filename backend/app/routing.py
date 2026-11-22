@@ -53,6 +53,11 @@ class Hazard:
     severity: float  # 0.0 (minor) to 1.0 (severe)
     blocked: bool  # True = nobody can pass; every mode skips the segment
 
+    def __post_init__(self) -> None:
+        # Written so NaN fails too: every comparison with NaN is False.
+        if not 0 <= self.severity <= 1:
+            raise ValueError(f"Hazard severity must be between 0 and 1, got {self.severity!r}")
+
 
 @dataclass(frozen=True)
 class Route:
@@ -93,10 +98,20 @@ def _risk(hazards: list[Hazard]) -> float:
     return max((hazard.severity for hazard in hazards), default=0.0)
 
 
+def _is_stairs(edge: dict) -> bool:
+    """OSMnx stores `highway` as a string, or a list when merged ways had different tags."""
+    highway = edge.get("highway")
+    if isinstance(highway, list):
+        return "steps" in highway
+    return highway == "steps"
+
+
 def make_weight(mode: RouteMode, hazards: Hazards) -> Callable[[Hashable, Hashable, dict], float | None]:
     """Build the per-request cost function. Returning None makes NetworkX skip the edge."""
 
     def weight(u: Hashable, v: Hashable, edge: dict) -> float | None:
+        if mode is RouteMode.ACCESSIBLE and _is_stairs(edge):
+            return None
         segment_hazards = hazards.get(segment_key(u, v), [])
         if any(hazard.blocked for hazard in segment_hazards):
             return None
