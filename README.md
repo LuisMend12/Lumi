@@ -4,6 +4,8 @@
 
 Winter walking navigation for Boston. Lumi recommends walking routes that account for reported snow, ice, and blocked sidewalks, not just distance. Built for HackBoston.
 
+**Demo video:** [docs/demo/lumi-demo.webm](docs/demo/lumi-demo.webm) (44 s). What it shows and how to record it again: [docs/demo/README.md](docs/demo/README.md).
+
 > **Status:** early. You can open a map of the 1.5 km area around Boston University, click a start and a destination, and compare the three route modes. Report rules exist in the backend, but there are no report endpoints, storage, or login yet. Plan and open questions: [docs/plans/2026-11-21-lumi-plan.md](docs/plans/2026-11-21-lumi-plan.md).
 
 ## Run the app
