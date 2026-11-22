@@ -1,6 +1,6 @@
 # Lumi photo review (Mastra)
 
-A small [Mastra](https://mastra.ai/docs) service with one agent, `sidewalkReviewer`, that looks at a hazard report photo with Google Gemini (`google/gemini-3.8-flash`, free tier) and answers in a fixed JSON shape. The FastAPI backend calls it over HTTP (`backend/app/photo_review.py`) and decides the verdict itself.
+A small [Mastra](https://mastra.ai/docs) service with one agent, `sidewalkReviewer`, that looks at a hazard report photo with Google Gemini (`google/gemini-3.1-flash-lite`, free tier) and answers in a fixed JSON shape. The FastAPI backend calls it over HTTP (`backend/app/photo_review.py`) and decides the verdict itself.
 
 ```
 FastAPI (make_mastra_reviewer) --POST /review--> Mastra (sidewalkReviewer) --> Gemini
