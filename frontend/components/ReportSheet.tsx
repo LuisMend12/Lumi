@@ -64,7 +64,7 @@ export default function ReportSheet({ getToken, notice, onClose, onReported }: P
         </button>
       </div>
 
-      {notice && <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">{notice}</p>}
+      {notice && <p className="mt-2 rounded-lg bg-[var(--ice)] px-3 py-2 text-sm text-[var(--navy)]">{notice}</p>}
 
       {stage.kind === "done" ? (
         <p role="status" className="mt-3 rounded-lg bg-[var(--ice)] px-3 py-3 text-sm text-[var(--navy)]">

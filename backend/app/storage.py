@@ -112,6 +112,15 @@ class PostgresReportStore:
             self._conn.execute(statement)
 
     def add(self, row: StoredReport) -> None:
+        try:
+            self._insert(row)
+        except psycopg.OperationalError:
+            # The connection dropped since the last call: reconnect once and retry (#61).
+            logger.warning("Insert failed on a dropped connection; reconnecting once")
+            self._conn = psycopg.connect(self._conninfo, autocommit=True)
+            self._insert(row)
+
+    def _insert(self, row: StoredReport) -> None:
         self._connection().execute(
             "INSERT INTO reports"
             " (report_id, segment_id, user_id, lat, lon, blocked, status, photo, simulated, reported_at)"

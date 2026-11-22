@@ -46,6 +46,7 @@ from app.routing import (
 )
 from app.routing import segment_id as make_segment_id
 from app.segments import SegmentIndex
+from app.upload_limit import FORM_OVERHEAD_BYTES, UploadSizeLimit
 from app.storage import MemoryReportStore, PostgresReportStore, StoredReport, default_store, new_vote_id, replay
 
 logger = logging.getLogger(__name__)
@@ -275,6 +276,13 @@ def create_app(
             ) from error
 
     app = FastAPI(title="Lumi API", lifespan=lifespan)
+    # Added before CORS so CORS stays outermost and the 413/411 replies still carry CORS headers.
+    app.add_middleware(
+        UploadSizeLimit,
+        paths={"/reports"},
+        max_body_bytes=MAX_PHOTO_BYTES + FORM_OVERHEAD_BYTES,
+        limit_label="5 MB",
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=frontend_origins(),
@@ -379,7 +387,7 @@ def create_app(
         segment = _key(segments, segment_id)
         with lock:
             now = datetime.now(UTC)
-            if body.blocked and reports.needs_photo(user_id, now):
+            if reports.vote_needs_photo(segment, user_id, body.blocked, now):
                 # Refused, so nothing to store: replay would refuse it again anyway.
                 return VoteOut(outcome="photo_required", segment_status=reports.status(segment))
             save(StoredReport(new_vote_id(), segment_id, user_id, body.lat, body.lon, body.blocked, now))
@@ -476,17 +484,19 @@ def create_app(
         segment = demo_segment(segment_id)
         lat, lon = segments.midpoint(segment_id)
         outcome = None
+        votes_cast = 0  # simulated voters refused as photo_required cast nothing
         with lock:
             for n in range(1, body.voters + 1):
                 user = f"{DEMO_USER_PREFIX}{n}"
                 now = datetime.now(UTC)
-                if body.blocked and reports.needs_photo(user, now):
+                if reports.vote_needs_photo(segment, user, body.blocked, now):
                     outcome = "photo_required"
                     continue
                 save(StoredReport(new_vote_id(), segment_id, user, lat, lon, body.blocked, now, simulated=True))
                 outcome = reports.vote(segment, user, body.blocked, now).value
+                votes_cast += 1
             status = reports.status(segment)
-        return DemoVotesOut(votes_cast=body.voters, outcome=outcome, segment_status=status)
+        return DemoVotesOut(votes_cast=votes_cast, outcome=outcome, segment_status=status)
 
     @app.post("/demo/reset", response_model=DemoResetOut)
     def demo_reset() -> DemoResetOut:
