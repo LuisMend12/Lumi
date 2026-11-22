@@ -47,6 +47,11 @@ BLOCK_REPORT_WINDOW = timedelta(hours=24)
 # A user must be this close to a segment to vote on it, and GET /segments/nearby
 # returns reported segments within this distance.
 NEARBY_RADIUS_M = 50
+# Each photo report is a paid call to the photo reviewer (Gemini), so a user
+# may send at most this many inside the window; more get 429 (#82).
+MAX_PHOTO_REPORTS_IN_WINDOW = 5
+PHOTO_REPORT_WINDOW = timedelta(hours=1)
+
 # Largest photo POST /reports accepts (5 MiB).
 MAX_PHOTO_BYTES = 5 * 1024 * 1024
 
