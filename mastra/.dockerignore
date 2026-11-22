@@ -1,0 +1,7 @@
+node_modules/
+.mastra/
+test/
+.env
+.env.*
+*.env
+!.env.example
