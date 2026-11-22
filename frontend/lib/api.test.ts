@@ -56,6 +56,13 @@ describe("fetchRoute", () => {
     });
   });
 
+  it("doesn't mark a server's answer as offline", async () => {
+    respond(404, {});
+
+    const outcome = await fetchRoute(START, END, "shortest");
+    expect(outcome.status === "error" && outcome.offline).toBeFalsy();
+  });
+
   it("falls back to a generic message for other errors", async () => {
     respond(500, { detail: [{ msg: "not a string" }] });
 
@@ -71,6 +78,7 @@ describe("fetchRoute", () => {
     expect(await fetchRoute(START, END, "shortest")).toEqual({
       status: "error",
       message: "Can't reach the Lumi server. Is the backend running?",
+      offline: true,
     });
   });
 });
