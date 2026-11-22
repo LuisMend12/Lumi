@@ -62,5 +62,9 @@ Roll back by redeploying the previous image or commit. The database schema only 
 
 ## Status of this page
 
-- `backend/Dockerfile` is written but **not test-built yet**: Docker Desktop's engine didn't start on the dev machine. Build it once before relying on it.
-- The storage part depends on PR #30. Update this page if it changes.
+- **Docker image verified on 2026-11-22** (from `main` after #25):
+  - It builds in about 50 s and is 1.19 GB.
+  - It answers `/health` about 4 s after start, the Docker health check reports healthy, and it uses about 194 MiB idle.
+  - The demo route matches the demo script: Shortest 870.6 m, Accessible 1085.0 m.
+  - That run had no `PGHOST`, so reports were kept in memory. The Tiger Data connection hasn't been checked from the container yet (#1).
+- Storage (#30) and the Mastra photo agent (#26) are merged. Update this page if their settings change.
