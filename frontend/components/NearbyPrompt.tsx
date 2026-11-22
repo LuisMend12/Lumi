@@ -3,10 +3,13 @@
 import { useState } from "react";
 import type { NearbySegment } from "@/lib/reports-api";
 
+// The answer's outcome, or an error. An error keeps the buttons so the visitor can retry (#55).
+export type VoteMessage = { text: string; isError: boolean };
+
 type Props = {
   segment: NearbySegment;
   isSending: boolean;
-  message: string | null;
+  message: VoteMessage | null;
   onVote: (blocked: boolean) => void;
   onDismiss: () => void;
 };
@@ -50,9 +53,14 @@ export default function NearbyPrompt({ segment, isSending, message, onVote, onDi
         </button>
       </div>
       <p className="mt-1 text-xs text-[var(--muted)]">The sidewalk highlighted in amber is within 50 m of you.</p>
-      {message ? (
+      {message?.isError && (
+        <p role="alert" className="mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900">
+          {message.text}
+        </p>
+      )}
+      {message && !message.isError ? (
         <p role="status" className="mt-3 rounded-lg bg-[var(--ice)] px-3 py-2 text-sm text-[var(--navy)]">
-          {message}
+          {message.text}
         </p>
       ) : (
         <div className="mt-3 grid grid-cols-2 gap-2">

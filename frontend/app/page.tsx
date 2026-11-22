@@ -8,7 +8,7 @@ import DemoPanel from "@/components/DemoPanel";
 import HowItWorks from "@/components/HowItWorks";
 import LumiMark from "@/components/LumiMark";
 import MapLegend from "@/components/MapLegend";
-import NearbyPrompt from "@/components/NearbyPrompt";
+import NearbyPrompt, { type VoteMessage } from "@/components/NearbyPrompt";
 import ReportCrawl from "@/components/ReportCrawl";
 import ReportSheet from "@/components/ReportSheet";
 import RouteControls from "@/components/RouteControls";
@@ -19,6 +19,7 @@ import { isDemoMode } from "@/lib/demo-api";
 import { LANDMARKS } from "@/lib/landmarks";
 import { getLocation } from "@/lib/device";
 import { createRequestTracker } from "@/lib/latest";
+import { withoutKey } from "@/lib/records";
 import { ACCESSIBLE_LIMITATION, MODE_STYLES, MODE_SUMMARIES, walkingMinutes } from "@/lib/modes";
 import { VOTE_OUTCOME_TEXT } from "@/lib/reporting";
 import {
@@ -53,8 +54,10 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [reports, setReports] = useState<Report[]>([]);
   const [nearby, setNearby] = useState<NearbySegment | null>(null);
-  const [dismissedSegment, setDismissedSegment] = useState<string | null>(null);
-  const [voteMessages, setVoteMessages] = useState<Record<string, string>>({});
+  // Every sidewalk the visitor said not to ask about, not just the last one (#55).
+  const [dismissedSegments, setDismissedSegments] = useState<ReadonlySet<string>>(() => new Set());
+  // Per sidewalk: the answer's outcome, or an error that keeps the buttons so they can retry (#55).
+  const [voteMessages, setVoteMessages] = useState<Record<string, VoteMessage>>({});
   const [isVoting, setIsVoting] = useState(false);
   const [sheetNotice, setSheetNotice] = useState<string | null>(null);
   const [isSheetOpen, setIsSheetOpen] = useState(false);
@@ -95,11 +98,13 @@ export default function Home() {
   // New route) wins, so a late GPS result or error can't override it (#67).
   const [startChoice] = useState(createRequestTracker);
 
-  // Reports to draw on the map, loaded once on open.
+  // Reports to draw on the map, loaded once on open. It takes a number from the same
+  // counter as refreshes, so a slow first load can't overwrite a newer refresh.
   useEffect(() => {
     let isActive = true;
+    const request = ++reportsRequestRef.current;
     fetchReports().then((result) => {
-      if (!isActive || !result.ok) return;
+      if (!isActive || !result.ok || request !== reportsRequestRef.current) return;
       setReports(result.data);
       setReportsUpdatedAt(new Date());
     });
@@ -332,6 +337,9 @@ export default function Home() {
       return;
     }
     const segmentId = nearby.segment_id;
+    const show = (text: string, isError: boolean) =>
+      setVoteMessages((messages) => ({ ...messages, [segmentId]: { text, isError } }));
+    setVoteMessages((messages) => withoutKey(messages, segmentId)); // a retry clears the last error
     setIsVoting(true);
     try {
       const location = await getLocation();
@@ -342,17 +350,16 @@ export default function Home() {
       }
       const result = await voteOnSegment(token, segmentId, blocked, location);
       if (!result.ok) {
-        setVoteMessages((messages) => ({ ...messages, [segmentId]: result.message }));
+        show(result.message, true);
       } else if (result.data.outcome === "photo_required") {
         setSheetNotice(VOTE_OUTCOME_TEXT.photo_required);
         setIsSheetOpen(true);
       } else {
-        setVoteMessages((messages) => ({ ...messages, [segmentId]: VOTE_OUTCOME_TEXT[result.data.outcome] }));
+        show(VOTE_OUTCOME_TEXT[result.data.outcome], false);
         if (result.data.outcome === "status_changed") await refreshAfterChange();
       }
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : "Something went wrong.";
-      setVoteMessages((messages) => ({ ...messages, [segmentId]: message }));
+      show(error instanceof Error ? error.message : "Something went wrong.", true);
     } finally {
       setIsVoting(false);
     }
@@ -367,7 +374,7 @@ export default function Home() {
     setIsSheetOpen(true);
   }
 
-  const promptSegment = isNearbyOn && nearby && nearby.segment_id !== dismissedSegment ? nearby : null;
+  const promptSegment = isNearbyOn && nearby && !dismissedSegments.has(nearby.segment_id) ? nearby : null;
 
   const hint = !start
     ? "Pick a start above, or tap the map (A)."
@@ -546,7 +553,7 @@ export default function Home() {
             isSending={isVoting}
             message={voteMessages[promptSegment.segment_id] ?? null}
             onVote={handleVote}
-            onDismiss={() => setDismissedSegment(promptSegment.segment_id)}
+            onDismiss={() => setDismissedSegments((dismissed) => new Set([...dismissed, promptSegment.segment_id]))}
           />
         )}
         {isSheetOpen && isSignedIn ? (
