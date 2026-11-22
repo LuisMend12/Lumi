@@ -2,7 +2,7 @@
 
 import { Show, SignInButton, UserButton, useAuth, useClerk } from "@clerk/nextjs";
 import dynamic from "next/dynamic";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import DemoPanel from "@/components/DemoPanel";
 import NearbyPrompt from "@/components/NearbyPrompt";
 import ReportSheet from "@/components/ReportSheet";
@@ -20,6 +20,8 @@ import {
 } from "@/lib/reports-api";
 
 const NEARBY_POLL_MS = 60_000;
+// Pick up other people's reports and blocks while the page is open (#59).
+const REFRESH_MS = 20_000;
 
 // Leaflet touches `window`, so the map only renders in the browser.
 const RouteMap = dynamic(() => import("@/components/RouteMap"), {
@@ -86,28 +88,78 @@ export default function Home() {
     };
   }, []);
 
-  async function loadRoutes(from: LatLon, to: LatLon) {
-    setIsLoading(true);
+  // The start and end on screen right now. Async code reads these instead of
+  // the values captured when it began, and each route request gets a number:
+  // results from an older request are dropped (#54, #59).
+  const pointsRef = useRef<{ start: LatLon | null; end: LatLon | null }>({ start: null, end: null });
+  const routeRequestRef = useRef(0);
+  // The request number of a load the visitor asked for while it runs, else null.
+  const explicitLoadRef = useRef<number | null>(null);
+  const reportsRequestRef = useRef(0);
+
+  function setPoints(nextStart: LatLon | null, nextEnd: LatLon | null) {
+    pointsRef.current = { start: nextStart, end: nextEnd };
+    routeRequestRef.current += 1; // any route request in flight is now stale
+    setStart(nextStart);
+    setEnd(nextEnd);
+  }
+
+  async function loadRoutes(from: LatLon, to: LatLon, { quiet = false } = {}) {
+    // A background refresh never replaces a load the visitor asked for that's still running.
+    if (quiet && explicitLoadRef.current === routeRequestRef.current) return;
+    const request = ++routeRequestRef.current;
+    if (!quiet) {
+      explicitLoadRef.current = request;
+      setIsLoading(true);
+    }
     const results = await Promise.all(ROUTE_MODES.map((mode) => fetchRoute(from, to, mode)));
+    if (request !== routeRequestRef.current) return; // the user picked new points meanwhile
+    explicitLoadRef.current = null;
+    // A background refresh that couldn't reach the server keeps the routes on screen:
+    // a network blip shouldn't wipe a good route. Loads the visitor asked for show the error.
+    if (quiet && results.some((outcome) => outcome.status === "error" && outcome.offline)) return;
     setOutcomes(Object.fromEntries(ROUTE_MODES.map((mode, i) => [mode, results[i]])));
     setIsLoading(false);
   }
 
-  // A sidewalk changed status: show the new reports and recompute any routes on screen.
-  async function refreshAfterChange() {
+  // A sidewalk may have changed status: show the new reports and recompute the routes on screen.
+  async function refreshAfterChange({ quiet = false } = {}) {
+    const reportsRequest = ++reportsRequestRef.current;
     const result = await fetchReports();
-    if (result.ok) setReports(result.data);
-    if (start && end) await loadRoutes(start, end);
+    // An older reports response that arrives late doesn't overwrite a newer one.
+    if (result.ok && reportsRequest === reportsRequestRef.current) setReports(result.data);
+    const { start: from, end: to } = pointsRef.current;
+    if (from && to) await loadRoutes(from, to, { quiet });
   }
+
+  // Keep the latest refresh function for the interval below, which is set up once.
+  const refreshRef = useRef(refreshAfterChange);
+  useEffect(() => {
+    refreshRef.current = refreshAfterChange;
+  });
+
+  // Other people's reports, votes and demo actions show up within REFRESH_MS,
+  // and right away when the tab comes back into view (#59).
+  useEffect(() => {
+    const refreshIfVisible = () => {
+      if (document.visibilityState === "visible") refreshRef.current({ quiet: true });
+    };
+    const id = setInterval(refreshIfVisible, REFRESH_MS);
+    document.addEventListener("visibilitychange", refreshIfVisible);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", refreshIfVisible);
+    };
+  }, []);
 
   async function handleMapClick(point: LatLon) {
     if (!start || end) {
-      setStart(point);
-      setEnd(null);
+      setPoints(point, null);
       setOutcomes({});
+      setIsLoading(false);
       return;
     }
-    setEnd(point);
+    setPoints(start, point);
     await loadRoutes(start, point);
   }
 
@@ -212,7 +264,7 @@ export default function Home() {
           </ul>
         )}
 
-        {isDemo && <DemoPanel route={selectedRoute} onChanged={refreshAfterChange} />}
+        {isDemo && <DemoPanel route={selectedRoute} onChanged={() => refreshAfterChange()} />}
 
         <p className="mt-auto text-xs text-[var(--muted)]">
           Routes use community reports, which can be missing or out of date. Lumi never guarantees a route is safe.
@@ -244,7 +296,7 @@ export default function Home() {
             getToken={getToken}
             notice={sheetNotice}
             onClose={() => setIsSheetOpen(false)}
-            onReported={refreshAfterChange}
+            onReported={() => refreshAfterChange()}
           />
         ) : (
           <button
