@@ -328,7 +328,7 @@ def create_app(
         segment = _key(segments, segment_id)
         with lock:
             now = datetime.now(UTC)
-            if body.blocked and reports.needs_photo(user_id, now):
+            if reports.vote_needs_photo(segment, user_id, body.blocked, now):
                 # Refused, so nothing to store: replay would refuse it again anyway.
                 return VoteOut(outcome="photo_required", segment_status=reports.status(segment))
             save(StoredReport(new_vote_id(), segment_id, user_id, body.lat, body.lon, body.blocked, now))
@@ -430,7 +430,7 @@ def create_app(
             for n in range(1, body.voters + 1):
                 user = f"{DEMO_USER_PREFIX}{n}"
                 now = datetime.now(UTC)
-                if body.blocked and reports.needs_photo(user, now):
+                if reports.vote_needs_photo(segment, user, body.blocked, now):
                     outcome = "photo_required"
                     continue
                 save(StoredReport(new_vote_id(), segment_id, user, lat, lon, body.blocked, now, simulated=True))
