@@ -16,6 +16,10 @@ GRAPH_PATH = BACKEND_DIR / "data" / "bu_walk.graphml"
 # treated as outside the coverage area instead of silently snapped.
 MAX_SNAP_DISTANCE_M = 250
 
+# Accessible mode (#33): a start or end reachable only by stairs moves to the
+# nearest point of the step-free network if it's at most this far away.
+MAX_STEP_FREE_SNAP_M = 100
+
 # How strongly Safer mode avoids hazards: a segment with risk 1.0 costs
 # (1 + SAFER_RISK_WEIGHT) times its length. Starting value; tune with data.
 SAFER_RISK_WEIGHT = 4.0
@@ -38,6 +42,12 @@ VOTES_TO_FLIP = 4
 # A user with this many blocked reports inside the window must send a photo.
 MAX_BLOCK_REPORTS_IN_WINDOW = 3
 BLOCK_REPORT_WINDOW = timedelta(hours=24)
+
+# How often pending photo reports are re-sent to the photo agent (#53).
+PENDING_RETRY_INTERVAL_S = 30
+# Each retry is a paid reviewer call, so a pending photo gets at most this many
+# per server run; after that it stays "Under review" until the next restart.
+MAX_PENDING_REVIEW_RETRIES = 10
 
 # Report endpoints (app/main.py).
 # A user must be this close to a segment to vote on it, and GET /segments/nearby

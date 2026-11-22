@@ -25,11 +25,13 @@ export interface Route {
   hazards: Hazard[];
   snapped_start?: LatLon;
   snapped_end?: LatLon;
+  notice?: string | null; // Accessible: why the route starts or ends at a nearby step-free point (#33)
 }
 
 export type RouteOutcome =
   | { status: "ok"; route: Route }
-  | { status: "error"; message: string };
+  // `offline`: the request never reached the server (no answer), so the route may still be fine.
+  | { status: "error"; message: string; offline?: true };
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
@@ -54,7 +56,7 @@ export async function fetchRoute(start: LatLon, end: LatLon, mode: RouteMode): P
     if (response.ok) return { status: "ok", route: body as Route };
     return { status: "error", message: errorMessage(response.status, body) };
   } catch {
-    return { status: "error", message: "Can't reach the Lumi server. Is the backend running?" };
+    return { status: "error", message: "Can't reach the Lumi server. Is the backend running?", offline: true };
   }
 }
 
