@@ -22,3 +22,8 @@ node_modules/
 # Local tool state
 .claude/settings.local.json
 .vibe-wise/
+
+# Demo recordings: upload them, never commit them (see docs/demo/README.md)
+*.webm
+*.mp4
+*.mov
