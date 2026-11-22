@@ -7,7 +7,7 @@
 | Piece | What it is | Suggested host | Needs |
 |---|---|---|---|
 | **Backend** | FastAPI in `backend/`, Docker image from `backend/Dockerfile` | An always-on VM or container host (e.g. Vultr) | about 0.5 GB RAM, port 8000, HTTPS in front |
-| **Photo agent** | Mastra service in `mastra/` (PR #26), calls Gemini | Same server as the backend | Node 22, a Gemini API key |
+| **Photo agent** | Mastra service in `mastra/`, calls Gemini | Same server as the backend | Node 22, a Gemini API key |
 | **Frontend** | Next.js in `frontend/` | Vercel, or the same server | `NEXT_PUBLIC_API_URL` |
 | **Database** | Tiger Data (managed Postgres + TimescaleDB) | Already hosted | The **rotated** password (#1) |
 
@@ -25,7 +25,7 @@ Never commit real values. Each folder has a `.env.example` with the names.
 |---|---|---|
 | `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`, `PGSSLMODE` | backend | From the Tiger Cloud console, after rotating the password (#1). Without `PGHOST`, reports are kept in memory only and lost on restart. |
 | `LUMI_FRONTEND_ORIGINS` | backend | The deployed frontend URL(s), comma-separated, e.g. `https://lumi.example.com`. Needed for CORS. Arrives with #25, which now includes the #28 report endpoints. |
-| `LUMI_MASTRA_URL` | backend | URL of the Mastra service, e.g. `http://127.0.0.1:4111` on the same server (comes with #26) |
+| `LUMI_MASTRA_URL` | backend | URL of the Mastra service, e.g. `http://127.0.0.1:4111` on the same server |
 | Gemini key (name in `mastra/.env.example`) | Mastra | From Google AI Studio. Free tier: Google may use submitted content, so demo with photos that don't show people. |
 | `NEXT_PUBLIC_API_URL` | frontend | The backend's public HTTPS URL. It's baked in at build time, so rebuild after changing it. |
 
@@ -39,6 +39,7 @@ Never commit real values. Each folder has a `.env.example` with the names.
    ```
    Check it: `curl https://<backend>/health` should return `{"status":"ok"}`, which takes about 10 s after start.
 3. **Photo agent:** start the Mastra service as described in `mastra/README.md`, then set `LUMI_MASTRA_URL` and restart the backend.
+   **Keep port 4111 private.** Besides `/review`, Mastra serves its own built-in agent endpoints (and Studio), so anyone who can reach it can spend our Gemini quota. Run it on the same server as the backend, and don't open 4111 in the firewall or publish it from Docker. Only the backend talks to it, over `127.0.0.1`.
 4. **Frontend:** deploy with `NEXT_PUBLIC_API_URL` set, then add its URL to `LUMI_FRONTEND_ORIGINS` and restart the backend.
 5. **Smoke test from a real phone** (not a laptop):
    - [ ] The map loads and the coverage circle shows
@@ -62,4 +63,4 @@ Roll back by redeploying the previous image or commit. The database schema only 
 ## Status of this page
 
 - `backend/Dockerfile` is written but **not test-built yet**: Docker Desktop's engine didn't start on the dev machine. Build it once before relying on it.
-- The Mastra and storage parts depend on PRs #26 and #30. Update this page if they change.
+- The storage part depends on PR #30. Update this page if it changes.

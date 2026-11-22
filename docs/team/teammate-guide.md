@@ -49,8 +49,8 @@ Pull `main` into your branch every few hours. Keep each branch to a few hours of
 
 ## Decided since your plan (please confirm)
 
-- **Photo review stays a Claude vision call inside FastAPI, not a Mastra service.** That means one backend to deploy, no TypeScript agent server, and no Mastra prize. Your plan had this open (§2 item 12). Your teammate chose this, so please object now if you disagree.
-- **Tiger Data is the one sponsor prize we go deep on.** It's already our database, and reports are time-stamped events. We skip Gemini, Solana, SpaceXSI and Mastra rather than bolting them on.
+- **Photo review runs as a Mastra agent on Gemini's free tier** (merged in #26). FastAPI calls it over HTTP. This replaced the earlier Claude-in-FastAPI plan, to avoid per-photo costs.
+- **Tiger Data is the main sponsor prize we go deep on.** It's already our database, and reports are time-stamped events. Mastra (and Gemini) now come along with photo review. We skip Solana and SpaceXSI.
 
 ## Questions for you
 
