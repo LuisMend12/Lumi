@@ -253,6 +253,17 @@ def test_user_with_too_many_blocked_votes_must_send_a_photo(confirming):
     assert response.json() == {"outcome": "photo_required", "segment_status": "open"}
 
 
+def test_still_blocked_on_a_blocked_sidewalk_is_not_refused_over_the_limit(confirming):
+    # #57: confirming a sidewalk that's already blocked never asks for a photo.
+    report(confirming, user="reporter", where=NEAR["C-D"])  # the photo blocks C-D
+    for segment in ["A-B", "B-D", "A-C"]:
+        vote(confirming, segment, "busy", blocked=True)
+
+    response = vote(confirming, "C-D", "busy", blocked=True)
+
+    assert response.json() == {"outcome": "vote_recorded", "segment_status": "blocked"}
+
+
 def test_vote_from_more_than_50_m_away_is_403(confirming):
     response = vote(confirming, "A-B", "u1", blocked=True, where=NEAR["C-D"])  # about 74 m from A-B
 
