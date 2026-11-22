@@ -41,6 +41,9 @@ BLOCK_REPORT_WINDOW = timedelta(hours=24)
 
 # How often pending photo reports are re-sent to the photo agent (#53).
 PENDING_RETRY_INTERVAL_S = 30
+# Each retry is a paid reviewer call, so a pending photo gets at most this many
+# per server run; after that it stays "Under review" until the next restart.
+MAX_PENDING_REVIEW_RETRIES = 10
 
 # Report endpoints (app/main.py).
 # A user must be this close to a segment to vote on it, and GET /segments/nearby

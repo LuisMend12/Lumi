@@ -42,6 +42,8 @@ SCHEMA = [
     )
     """,
     "SELECT create_hypertable('reports', 'reported_at', if_not_exists => TRUE)",
+    # When a pending photo got its verdict (#53). NULL = decided when reported.
+    "ALTER TABLE reports ADD COLUMN IF NOT EXISTS decided_at timestamptz",
 ]
 
 
@@ -63,6 +65,12 @@ class StoredReport:
     status: PhotoVerdict | None = None
     photo: bytes | None = None
     simulated: bool = False  # created by a demo endpoint, not a real person
+    decided_at: datetime | None = None  # a late verdict's time; None = decided when reported
+
+    @property
+    def effective_at(self) -> datetime:
+        """When this row took effect: replay applies rows in this order."""
+        return self.decided_at or self.reported_at
 
 
 class MemoryReportStore:
@@ -77,10 +85,11 @@ class MemoryReportStore:
     def all(self) -> list[StoredReport]:
         return sorted(self._rows, key=lambda row: (row.reported_at, row.report_id))
 
-    def update_status(self, report_id: str, status: PhotoVerdict) -> None:
-        """A pending photo got its verdict (#53): store it and drop the photo bytes."""
+    def update_status(self, report_id: str, status: PhotoVerdict, decided_at: datetime) -> None:
+        """A pending photo got its verdict (#53): store it, when, and drop the photo bytes."""
         self._rows = [
-            replace(row, status=status, photo=None) if row.report_id == report_id else row for row in self._rows
+            replace(row, status=status, photo=None, decided_at=decided_at) if row.report_id == report_id else row
+            for row in self._rows
         ]
 
     def delete_simulated(self) -> int:
@@ -126,7 +135,7 @@ class PostgresReportStore:
         nothing else needs them, and loading every photo would slow startup."""
         rows = self._connection().execute(
             "SELECT report_id, segment_id, user_id, lat, lon, blocked, reported_at, status,"
-            " CASE WHEN status = 'pending' THEN photo END, simulated"
+            " CASE WHEN status = 'pending' THEN photo END, simulated, decided_at"
             " FROM reports ORDER BY reported_at, report_id"
         ).fetchall()
         return [
@@ -136,14 +145,16 @@ class PostgresReportStore:
                 status=PhotoVerdict(status) if status else None,
                 photo=bytes(photo) if photo is not None else None,
                 simulated=simulated,
+                decided_at=decided_at.astimezone(UTC) if decided_at is not None else None,
             )
-            for *columns, reported_at, status, photo, simulated in rows
+            for *columns, reported_at, status, photo, simulated, decided_at in rows
         ]
 
-    def update_status(self, report_id: str, status: PhotoVerdict) -> None:
-        """A pending photo got its verdict (#53): store it and drop the photo bytes."""
+    def update_status(self, report_id: str, status: PhotoVerdict, decided_at: datetime) -> None:
+        """A pending photo got its verdict (#53): store it, when, and drop the photo bytes."""
         self._connection().execute(
-            "UPDATE reports SET status = %s, photo = NULL WHERE report_id = %s", (status.value, report_id)
+            "UPDATE reports SET status = %s, photo = NULL, decided_at = %s WHERE report_id = %s",
+            (status.value, decided_at, report_id),
         )
 
     def delete_simulated(self) -> int:
@@ -170,12 +181,16 @@ def default_store() -> PostgresReportStore | MemoryReportStore:
 
 
 def replay(rows: list[StoredReport], book: SegmentReports, segments: SegmentIndex) -> int:
-    """Apply stored rows to `book`, oldest first, with each photo's stored status.
+    """Apply stored rows to `book` in the order they took effect, with each photo's stored status.
 
+    A photo whose verdict came late (#53) is applied when it was decided, not when it
+    was reported, so votes cast in between replay before it, exactly as they happened.
     The reviewer is never called here. Returns how many rows were applied.
     """
     applied = 0
-    for row in rows:
+    # On a tie (clocks tick ~15 ms on Windows), a late verdict goes last: it was decided
+    # after every row already stored at that instant.
+    for row in sorted(rows, key=lambda row: (row.effective_at, row.decided_at is not None, row.report_id)):
         if row.segment_id not in segments:
             logger.warning("Skipping stored report %s: segment %s isn't in the street graph", row.report_id, row.segment_id)
             continue

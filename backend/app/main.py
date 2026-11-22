@@ -25,6 +25,7 @@ from app.config import (
     MAX_PHOTO_BYTES,
     MAX_SNAP_DISTANCE_M,
     NEARBY_RADIUS_M,
+    MAX_PENDING_REVIEW_RETRIES,
     PENDING_RETRY_INTERVAL_S,
     VOTES_TO_FLIP,
     frontend_origins,
@@ -202,26 +203,37 @@ def create_app(
             yield
         finally:
             stop_retrying.set()
-            retrier.join(timeout=5)
+            retrier.join()  # it stops between photos, so at most one reviewer call (20 s) to finish
             if store is None:  # we opened it, so we close it
                 report_store.close()
 
-    def retry_pending_photos() -> int:
+    retries: dict[str, int] = {}  # report id -> reviewer calls made by retries this run
+
+    def retry_pending_photos(stop: threading.Event | None = None) -> int:
         """Re-send pending photos to the agent and apply any verdict (#53). Returns how many resolved.
 
         The agent is called outside the lock, like in POST /reports, so a slow
         agent never blocks routing. Each verdict is saved before it's applied.
+        Each photo is retried at most MAX_PENDING_REVIEW_RETRIES times per run (each
+        is a paid call), and `stop` is checked between photos so shutdown never waits
+        on a long backlog.
         """
         with lock:
             waiting = reports.pending_photos()
         resolved = 0
         for photo_report in waiting:
+            if stop is not None and stop.is_set():
+                break
+            attempts = retries.get(photo_report.report_id, 0)
+            if attempts >= MAX_PENDING_REVIEW_RETRIES:
+                continue
+            retries[photo_report.report_id] = attempts + 1
             verdict = _review(reviewer, photo_report.photo)
             if verdict is PhotoVerdict.UNAVAILABLE:
                 continue
             with lock:
                 try:
-                    report_store.update_status(photo_report.report_id, verdict)
+                    report_store.update_status(photo_report.report_id, verdict, datetime.now(UTC))
                 except Exception:
                     logger.exception("Couldn't save the new verdict for %s; will retry", photo_report.report_id)
                     continue
@@ -234,7 +246,7 @@ def create_app(
     def retry_until_stopped(stop: threading.Event) -> None:
         while not stop.wait(PENDING_RETRY_INTERVAL_S):
             try:
-                retry_pending_photos()
+                retry_pending_photos(stop)
             except Exception:  # keep retrying on the next tick
                 logger.exception("Pending photo retry failed")
 
