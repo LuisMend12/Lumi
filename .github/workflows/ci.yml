@@ -46,6 +46,7 @@ jobs:
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npm run lint
+      - run: npm test --if-present # frontend tests arrive with #81
 
   mastra:
     runs-on: ubuntu-latest
