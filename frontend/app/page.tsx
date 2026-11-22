@@ -3,9 +3,11 @@
 import { SignInButton, SignedIn, SignedOut, UserButton, useAuth, useClerk } from "@clerk/nextjs";
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
+import DemoPanel from "@/components/DemoPanel";
 import NearbyPrompt from "@/components/NearbyPrompt";
 import ReportSheet from "@/components/ReportSheet";
 import { fetchRoute, ROUTE_MODES, USE_MOCKS, type LatLon, type RouteMode, type RouteOutcome } from "@/lib/api";
+import { isDemoMode } from "@/lib/demo-api";
 import { getLocation } from "@/lib/device";
 import { ACCESSIBLE_LIMITATION, MODE_STYLES, walkingMinutes } from "@/lib/modes";
 import { VOTE_OUTCOME_TEXT } from "@/lib/reporting";
@@ -43,11 +45,21 @@ export default function Home() {
   const [sheetNotice, setSheetNotice] = useState<string | null>(null);
   const [isSheetOpen, setIsSheetOpen] = useState(false);
   const [locationNotice, setLocationNotice] = useState<string | null>(null);
+  const [isDemo, setIsDemo] = useState(false);
 
   // Reports to draw on the map, loaded once on open.
   useEffect(() => {
     let isActive = true;
     fetchReports().then((result) => isActive && result.ok && setReports(result.data));
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
+  // The Demo panel only exists when the backend runs in demo mode (#47).
+  useEffect(() => {
+    let isActive = true;
+    isDemoMode().then((on) => isActive && setIsDemo(on));
     return () => {
       isActive = false;
     };
@@ -145,6 +157,8 @@ export default function Home() {
 
   const hint = !start ? "Tap the map to set your start." : !end ? "Now tap your destination." : null;
   const sharedError = sameErrorForAllModes(outcomes);
+  const selectedOutcome = outcomes[selectedMode];
+  const selectedRoute = selectedOutcome?.status === "ok" ? selectedOutcome.route : null;
 
   return (
     <main className="flex h-dvh flex-col md:flex-row">
@@ -197,6 +211,8 @@ export default function Home() {
             ))}
           </ul>
         )}
+
+        {isDemo && <DemoPanel route={selectedRoute} onChanged={refreshAfterChange} />}
 
         <p className="mt-auto text-xs text-[var(--muted)]">
           Routes use community reports, which can be missing or out of date. Lumi never guarantees a route is safe.
