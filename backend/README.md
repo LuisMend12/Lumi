@@ -96,7 +96,7 @@ The full shapes are in [docs/team/api-contract.md](../docs/team/api-contract.md)
 | `GET /segments/nearby?lat=&lon=` | `200`: reported segments within 50 m, closest first | `422` |
 | `GET /reports` | `200`: confirmed, unverified and pending photo reports, newest first | |
 
-A report is attached to the closest sidewalk segment, measured to the street's shape rather than to its intersections. The backend calls Mastra for photo review. If review is unavailable, the report stays `pending` and does not affect routing.
+A report is attached to the closest sidewalk segment, measured to the street's shape rather than to its intersections. No photo reviewer is wired in yet, so outside tests every photo report stays `pending` and doesn't affect routing.
 
 ### Storage
 
@@ -112,7 +112,7 @@ The street graph is loaded once at startup and never modified. Hazards are kept 
 - **Shortest:** cost = length.
 - **Safer / Accessible:** cost = length × (1 + `SAFER_RISK_WEIGHT` × risk). Risk is the highest severity reported on the segment, from 0 to 1.
 
-Hazards come from confirmed community reports. Accessible also avoids mapped stairs.
+Hazards come from confirmed community reports, so until someone reports a blockage all three modes return the same route.
 
 ## Layout
 
@@ -174,8 +174,10 @@ Each photo is one Gemini call, which counts against the free tier's rate limits.
 
 ## Known issues
 
+- Route lines connect intersections in straight lines and ignore the curve geometry stored in the graph (`app/routing.py`).
 - When two paths connect the same pair of intersections, only the shortest is kept (`app/main.py`, `load_street_graph`).
 - The stretch from the requested point to the snapped intersection isn't included in the route.
-- Accessible avoids mapped stairs and uses Safer's hazard weights. Curb-ramp and slope data are unavailable.
+- `Hazard.severity` isn't range-checked.
+- Accessible currently uses the same weights as Safer, because there's no curb-ramp or slope data.
 
 More detail is in the plan doc's "Known issues" section.
