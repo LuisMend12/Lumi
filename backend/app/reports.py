@@ -106,10 +106,15 @@ class SegmentReports:
         """True if a blocked vote from this user would get PHOTO_REQUIRED."""
         return self._too_many_block_reports(user_id, now)
 
+    def vote_needs_photo(self, segment: SegmentKey, user_id: str, blocked: bool, now: datetime) -> bool:
+        """True if this vote would get PHOTO_REQUIRED. Only a vote that would block an
+        open sidewalk is limited; confirming one that's already blocked never is (#57)."""
+        return self._is_block_attempt(segment, blocked) and self.needs_photo(user_id, now)
+
     def vote(self, segment: SegmentKey, user_id: str, blocked: bool, now: datetime) -> ReportOutcome:
-        if blocked and self.needs_photo(user_id, now):
+        if self.vote_needs_photo(segment, user_id, blocked, now):
             return ReportOutcome.PHOTO_REQUIRED
-        if blocked:
+        if self._is_block_attempt(segment, blocked):
             self._remember_block_report(user_id, now)
 
         wanted = SegmentStatus.BLOCKED if blocked else SegmentStatus.OPEN
@@ -162,6 +167,9 @@ class SegmentReports:
     def _set_status(self, segment: SegmentKey, status: SegmentStatus) -> None:
         self._status[segment] = status
         self._votes[segment] = {}  # votes before a change don't carry over
+
+    def _is_block_attempt(self, segment: SegmentKey, blocked: bool) -> bool:
+        return blocked and self.status(segment) is not SegmentStatus.BLOCKED
 
     def _too_many_block_reports(self, user_id: str, now: datetime) -> bool:
         recent = [t for t in self._block_reports.get(user_id, []) if now - t < BLOCK_REPORT_WINDOW]
