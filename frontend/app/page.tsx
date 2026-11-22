@@ -48,6 +48,8 @@ export default function Home() {
   const [isSheetOpen, setIsSheetOpen] = useState(false);
   const [locationNotice, setLocationNotice] = useState<string | null>(null);
   const [isDemo, setIsDemo] = useState(false);
+  // Nearby checks read location, so they start only after the visitor asks (#65).
+  const [isNearbyOn, setIsNearbyOn] = useState(false);
 
   // Reports to draw on the map, loaded once on open.
   useEffect(() => {
@@ -67,8 +69,22 @@ export default function Home() {
     };
   }, []);
 
-  // While the app is open, check every minute for a reported sidewalk nearby to ask about.
+  // If this browser already allowed location on an earlier visit, nearby checks
+  // can start without showing a permission dialog. Otherwise we wait for a tap.
   useEffect(() => {
+    let isActive = true;
+    navigator.permissions
+      ?.query({ name: "geolocation" })
+      .then((status) => isActive && status.state === "granted" && setIsNearbyOn(true))
+      .catch(() => {}); // the Permissions API is optional; the button still works
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
+  // Once on, check every minute for a reported sidewalk nearby to ask about.
+  useEffect(() => {
+    if (!isNearbyOn) return;
     let isActive = true;
     async function checkNearby() {
       try {
@@ -86,7 +102,7 @@ export default function Home() {
       isActive = false;
       clearInterval(id);
     };
-  }, []);
+  }, [isNearbyOn]);
 
   // The start and end on screen right now. Async code reads these instead of
   // the values captured when it began, and each route request gets a number:
@@ -205,7 +221,7 @@ export default function Home() {
     setIsSheetOpen(true);
   }
 
-  const promptSegment = nearby && nearby.segment_id !== dismissedSegment ? nearby : null;
+  const promptSegment = isNearbyOn && nearby && nearby.segment_id !== dismissedSegment ? nearby : null;
 
   const hint = !start ? "Tap the map to set your start." : !end ? "Now tap your destination." : null;
   const sharedError = sameErrorForAllModes(outcomes);
@@ -241,7 +257,17 @@ export default function Home() {
           </p>
         )}
         {hint && <p className="rounded-lg bg-[var(--ice)] px-3 py-2 text-sm text-[var(--navy)]">{hint}</p>}
-        {locationNotice && <p className="text-xs text-[var(--muted)]">{locationNotice}</p>}
+        <NearbyToggle
+          isOn={isNearbyOn}
+          notice={locationNotice}
+          onChange={(isOn) => {
+            setIsNearbyOn(isOn);
+            if (!isOn) {
+              setLocationNotice(null);
+              setNearby(null); // don't flash an old sidewalk question when checks are turned back on
+            }
+          }}
+        />
         {isLoading && <p className="text-sm text-[var(--muted)]">Finding routes…</p>}
 
         {sharedError && !isLoading && (
@@ -296,7 +322,10 @@ export default function Home() {
             getToken={getToken}
             notice={sheetNotice}
             onClose={() => setIsSheetOpen(false)}
-            onReported={() => refreshAfterChange()}
+            onReported={() => {
+              setIsNearbyOn(true);
+              refreshAfterChange();
+            }}
           />
         ) : (
           <button
@@ -309,6 +338,39 @@ export default function Home() {
         )}
       </div>
     </main>
+  );
+}
+
+type NearbyToggleProps = {
+  isOn: boolean;
+  notice: string | null; // e.g. location blocked
+  onChange: (isOn: boolean) => void;
+};
+
+// Lumi reads location only after this tap (or a report), never on page load (#65).
+function NearbyToggle({ isOn, notice, onChange }: NearbyToggleProps) {
+  if (!isOn) {
+    return (
+      <button
+        type="button"
+        onClick={() => onChange(true)}
+        className="self-start rounded-full border-2 border-[var(--frost)] px-3 py-1.5 text-sm font-medium text-[var(--navy)] hover:border-[var(--navy)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--navy)]"
+      >
+        Check sidewalks near me
+      </button>
+    );
+  }
+  return (
+    <p className="flex items-center gap-2 text-sm text-[var(--muted)]">
+      <span>{notice ?? "Checking reported sidewalks near you while Lumi is open."}</span>
+      <button
+        type="button"
+        onClick={() => onChange(false)}
+        className="shrink-0 rounded-md px-2 py-1 font-medium text-[var(--navy)] underline underline-offset-2 hover:bg-[var(--snow)]"
+      >
+        Stop
+      </button>
+    </p>
   );
 }
 
