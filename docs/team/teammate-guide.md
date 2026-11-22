@@ -1,5 +1,7 @@
 # Working on Lumi together: guide for the frontend lane
 
+For the current setup, demo rehearsal, and next tasks, start with the [teammate handoff](handoff.md). The guide below records the original frontend and backend split.
+
 This is for you, the teammate building the frontend. It explains who does what for the rest of the hackathon, how we keep track of work, and what we need you to decide. Your Claude has its own guide, [claude-guide.md](claude-guide.md), with the technical details, so you don't need to read that one.
 
 **Reading time:** about 5 minutes. The questions at the end matter most.
