@@ -2,23 +2,47 @@
 
 /* Lumi winter palette */
 :root {
-  --navy: #102a43;
-  --muted: #486581;
-  --ice: #e6f4fb;
-  --snow: #f5f9fc;
-  --frost: #b6dcef;
+  /* Storm Center palette (#68): light blue, white and navy are binding. */
+  --navy: #0b2545;
+  --storm: #1d4e89;
+  --sky: #8ecae6;
+  --muted: #1d4e89; /* secondary text is storm blue, never grey */
+  --ice: #eaf4fa; /* light tint for hints and selected surfaces */
+  --snow: #f4f9fc;
+  --frost: #cfe3ef; /* hairlines */
+  --amber: #ffb703; /* report state: unverified */
+  --alert: #d62828; /* report state: blocked */
   /* Route colors are in lib/modes.ts (Leaflet needs hex values). */
 }
 
 @theme inline {
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-body);
+  --font-display: var(--font-display);
 }
 
 body {
   background: var(--snow);
   color: var(--navy);
-  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  font-family: var(--font-body), system-ui, sans-serif;
+  font-variant-numeric: tabular-nums lining-nums; /* the numbers are the broadcast */
+  accent-color: var(--storm);
+}
+
+/* Browser surfaces carry the world too. */
+::selection {
+  background: var(--sky);
+  color: var(--navy);
+}
+:focus-visible {
+  outline: 3px solid var(--navy); /* sky only on navy controls, e.g. the Report button */
+  outline-offset: 2px;
+}
+* {
+  scrollbar-color: var(--frost) transparent;
+}
+
+.font-display {
+  font-family: var(--font-display), system-ui, sans-serif;
 }
 
 /* Start (A) and destination (B) pins: on the map and in the legend (#66). */
@@ -29,7 +53,7 @@ body {
   width: 28px;
   height: 28px;
   border-radius: 9999px;
-  font: 700 13px/1 var(--font-geist-sans), system-ui, sans-serif;
+  font: 800 15px/1 var(--font-display), system-ui, sans-serif;
   box-shadow: 0 2px 6px rgba(16, 42, 67, 0.35);
 }
 .lumi-pin--start {
@@ -41,4 +65,58 @@ body {
   background: #fff;
   color: var(--navy);
   border: 3px solid var(--navy);
+}
+
+/* The live report crawl (#68). Reduced motion holds it still and lets it scroll. */
+@keyframes lumi-crawl {
+  to {
+    transform: translateX(-50%);
+  }
+}
+.lumi-crawl {
+  animation: lumi-crawl 40s linear infinite;
+}
+.lumi-crawl:hover {
+  animation-play-state: paused;
+}
+@media (prefers-reduced-motion: reduce) {
+  .lumi-crawl {
+    animation: none;
+  }
+  /* Held still, the strip scrolls by hand so every report stays reachable. */
+  .lumi-crawl-strip {
+    overflow-x: auto;
+  }
+}
+
+/* Mute the OSM tiles into the Storm Center palette: only the tiles, never the routes or markers. */
+.leaflet-tile-pane {
+  filter: grayscale(1) brightness(1.06) contrast(0.82) sepia(0.25) hue-rotate(170deg) saturate(1.4);
+}
+
+/* Keep Leaflet's bottom controls (attribution) above the 40px report crawl. */
+.leaflet-container .leaflet-bottom {
+  bottom: 40px;
+}
+
+/* Leaflet surfaces in the world's type. */
+.leaflet-container {
+  font-family: var(--font-body), system-ui, sans-serif;
+  background: var(--ice);
+}
+.leaflet-tooltip {
+  font: 600 12px/1.2 var(--font-body), system-ui, sans-serif;
+  color: var(--navy);
+  padding: 4px 8px;
+  border-color: var(--frost);
+}
+.leaflet-control-zoom a {
+  color: var(--navy) !important;
+}
+/* The world's 40px zoom control instead of Leaflet's 26px default. */
+.leaflet-container .leaflet-bar a {
+  width: 40px;
+  height: 40px;
+  line-height: 40px;
+  font-size: 22px;
 }

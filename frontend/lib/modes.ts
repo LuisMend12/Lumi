@@ -8,18 +8,24 @@ const WALKING_SPEED_M_PER_MIN = 80;
 
 interface ModeStyle {
   label: string;
-  color: string;
+  color: string; // the mode's own colour: its map line, and its chyron when chosen
+  ink: string; // text on a chyron flooded with `color`
+  casing: { color: string; opacity: number }; // underlay that keeps the line legible on the pale basemap
   dashArray?: string; // so modes differ by more than color
 }
 
 // Leaflet writes colors into SVG attributes, which can't read CSS variables,
-// so map colors live here as hex values.
-export const NAVY = "#102a43";
+// so map colors live here as hex values. Storm Center palette (#68).
+export const NAVY = "#0b2545";
+export const STORM = "#1d4e89";
+export const SKY = "#8ecae6";
+export const AMBER = "#ffb703";
+export const WHITE = "#ffffff";
 
 export const MODE_STYLES: Record<RouteMode, ModeStyle> = {
-  shortest: { label: "Shortest", color: "#334e68" },
-  safer: { label: "Safer", color: "#0284c7", dashArray: "1 10" },
-  accessible: { label: "Accessible", color: "#7c3aed", dashArray: "12 8" },
+  shortest: { label: "Shortest", color: SKY, ink: NAVY, casing: { color: NAVY, opacity: 0.32 } },
+  safer: { label: "Safer", color: STORM, ink: WHITE, dashArray: "1 10", casing: { color: WHITE, opacity: 1 } },
+  accessible: { label: "Accessible", color: NAVY, ink: WHITE, dashArray: "12 8", casing: { color: WHITE, opacity: 1 } },
 };
 
 // One line per mode, shown on every card so no mode reads as a safety promise (#66).
@@ -35,14 +41,17 @@ interface VerificationStyle {
   label: string;
   fill: string;
   fillOpacity: number;
+  stroke: string;
+  dashArray?: string;
 }
 
-// Each verification state has its own text label, not just a color, so an
+// Verification is a mark in a fixed cell: filled confirmed, hollow unverified,
+// dotted under review (#68). Each state also has its own text label, so an
 // unverified or pending report is never shown as fact.
 export const VERIFICATION_STYLES: Record<Verification, VerificationStyle> = {
-  confirmed: { label: "Confirmed", fill: NAVY, fillOpacity: 1 },
-  unverified: { label: "Unverified report", fill: "#ffffff", fillOpacity: 1 },
-  pending: { label: "Under review", fill: "#9fb3c8", fillOpacity: 1 },
+  confirmed: { label: "Confirmed", fill: NAVY, fillOpacity: 1, stroke: WHITE },
+  unverified: { label: "Unverified report", fill: WHITE, fillOpacity: 1, stroke: AMBER },
+  pending: { label: "Under review", fill: WHITE, fillOpacity: 1, stroke: NAVY, dashArray: "1 4" },
 };
 
 export function hazardLabel(hazard: Hazard): string {

@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import DemoPanel from "@/components/DemoPanel";
 import MapLegend from "@/components/MapLegend";
 import NearbyPrompt from "@/components/NearbyPrompt";
+import ReportCrawl from "@/components/ReportCrawl";
 import ReportSheet from "@/components/ReportSheet";
 import RouteControls from "@/components/RouteControls";
 import RoutePicker, { MAP_POINT, MY_LOCATION } from "@/components/RoutePicker";
@@ -61,14 +62,33 @@ export default function Home() {
   const [toChoice, setToChoice] = useState("");
   const [isLocating, setIsLocating] = useState(false);
   const [pickerError, setPickerError] = useState<string | null>(null);
+  // With a route on screen, From/To collapse into one A → B row until the visitor edits (#68).
+  const [isEditingRoute, setIsEditingRoute] = useState(false);
+  const [reportsUpdatedAt, setReportsUpdatedAt] = useState<Date | null>(null);
 
   // Reports to draw on the map, loaded once on open.
   useEffect(() => {
     let isActive = true;
-    fetchReports().then((result) => isActive && result.ok && setReports(result.data));
+    fetchReports().then((result) => {
+      if (!isActive || !result.ok) return;
+      setReports(result.data);
+      setReportsUpdatedAt(new Date());
+    });
     return () => {
       isActive = false;
     };
+  }, []);
+
+  // ?from=<landmark id>&to=<landmark id> opens straight onto that route: shareable links,
+  // the demo route, and route-state screenshots (#68).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const from = LANDMARKS.find((landmark) => landmark.id === params.get("from"));
+    const to = LANDMARKS.find((landmark) => landmark.id === params.get("to"));
+    if (!from || !to) return;
+    setFromChoice(from.id);
+    setToChoice(to.id);
+    void applyPointsRef.current(from.point, to.point);
   }, []);
 
   // The Demo panel only exists when the backend runs in demo mode (#47).
@@ -140,7 +160,10 @@ export default function Home() {
   // A sidewalk may have changed status: show the new reports and recompute the routes on screen.
   async function refreshAfterChange({ quiet = false } = {}) {
     const result = await fetchReports();
-    if (result.ok) setReports(result.data);
+    if (result.ok) {
+      setReports(result.data);
+      setReportsUpdatedAt(new Date());
+    }
     const { start: from, end: to } = pointsRef.current;
     if (from && to) await loadRoutes(from, to, { quiet });
   }
@@ -168,6 +191,7 @@ export default function Home() {
   // Set either point from the map, a picker, or My location; routes load once both exist.
   async function applyPoints(nextStart: LatLon | null, nextEnd: LatLon | null) {
     setEditing(null);
+    if (nextStart && nextEnd) setIsEditingRoute(false);
     setPickerError(null);
     setPoints(nextStart, nextEnd);
     if (nextStart && nextEnd) {
@@ -231,6 +255,11 @@ export default function Home() {
     await applyPoints(pointsRef.current.start, await pointForChoice(choice));
   }
 
+  const applyPointsRef = useRef(applyPoints);
+  useEffect(() => {
+    applyPointsRef.current = applyPoints;
+  });
+
   function startNewRoute() {
     setFromChoice("");
     setToChoice("");
@@ -291,14 +320,18 @@ export default function Home() {
   const sharedError = sameErrorForAllModes(outcomes);
   const selectedOutcome = outcomes[selectedMode];
   const selectedRoute = selectedOutcome?.status === "ok" ? selectedOutcome.route : null;
+  const hasRoute = Boolean(start && end);
 
   return (
     <main className="flex h-dvh flex-col md:flex-row">
-      <section className="order-2 flex max-h-[45dvh] flex-col gap-4 overflow-y-auto bg-white p-4 shadow-[0_-8px_24px_rgba(16,42,67,0.12)] md:order-1 md:max-h-none md:w-96 md:p-6 md:shadow-[8px_0_24px_rgba(16,42,67,0.08)]">
+      <section className={`order-2 flex max-h-[58dvh] flex-col gap-4 overflow-y-auto bg-white p-4 shadow-[0_-8px_24px_rgba(16,42,67,0.12)] md:order-1 md:max-h-none md:w-96 md:p-6 md:shadow-[8px_0_24px_rgba(16,42,67,0.08)]`}>
         <header className="flex items-start justify-between gap-3">
           <div>
-            <h1 className="text-3xl font-semibold tracking-tight text-[var(--navy)]">Lumi</h1>
-            <p className="text-sm text-[var(--muted)]">Winter walking routes around BU, shaped by what people report.</p>
+            <h1 className="font-display text-[40px] leading-none font-extrabold tracking-[-0.01em] text-[var(--navy)]">Lumi</h1>
+            {/* On phones the tagline gives its space to the chyrons. */}
+            <p className="mt-1 hidden text-sm text-[var(--storm)] md:block">
+              Winter walking routes around BU, shaped by what people report.
+            </p>
           </div>
           <SignedOut>
             <SignInButton mode="modal">
@@ -316,49 +349,63 @@ export default function Home() {
         </header>
 
         {USE_MOCKS && (
-          <p className="rounded-lg border-2 border-dashed border-amber-500 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">
-            Mock data: routes and hazards are simulated, not real reports.
+          <p className="flex items-center gap-2 rounded-lg border border-[var(--frost)] bg-white px-3 py-2 text-sm text-[var(--navy)]">
+            <SimulatedBadge />
+            Mock data: routes and reports here are not real.
           </p>
         )}
-        <RoutePicker
-          from={fromChoice}
-          to={toChoice}
-          isLocating={isLocating}
-          onFromChange={handleFromChange}
-          onToChange={handleToChange}
-        />
+
+        {hasRoute && !isEditingRoute ? (
+          <RouteSummary
+            from={choiceLabel(fromChoice)}
+            to={choiceLabel(toChoice)}
+            onEdit={() => setIsEditingRoute(true)}
+          />
+        ) : (
+          <>
+            <RoutePicker
+              from={fromChoice}
+              to={toChoice}
+              isLocating={isLocating}
+              onFromChange={handleFromChange}
+              onToChange={handleToChange}
+            />
+            {hint && <p className="rounded-lg bg-[var(--ice)] px-3 py-2 text-sm text-[var(--navy)]">{hint}</p>}
+            {(start || end) && (
+              <RouteControls
+                hasEnd={Boolean(start && end)}
+                editing={editing}
+                onEdit={setEditing}
+                onNewRoute={startNewRoute}
+              />
+            )}
+            {hasRoute && (
+              <button
+                type="button"
+                onClick={() => setIsEditingRoute(false)}
+                className="self-start text-sm font-semibold text-[var(--storm)] underline underline-offset-2"
+              >
+                Done editing
+              </button>
+            )}
+          </>
+        )}
         {pickerError && (
           <p role="alert" className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900">
             {pickerError}
           </p>
         )}
-        {hint && <p className="rounded-lg bg-[var(--ice)] px-3 py-2 text-sm text-[var(--navy)]">{hint}</p>}
-        {(start || end) && (
-          <RouteControls
-            hasEnd={Boolean(start && end)}
-            editing={editing}
-            onEdit={setEditing}
-            onNewRoute={startNewRoute}
-          />
-        )}
-        <NearbyToggle
-          isOn={isNearbyOn}
-          notice={locationNotice}
-          onChange={(isOn) => {
-            setIsNearbyOn(isOn);
-            if (!isOn) setLocationNotice(null);
-          }}
-        />
-        {isLoading && <p className="text-sm text-[var(--muted)]">Finding routes…</p>}
-
+        {isLoading && <p className="text-sm text-[var(--storm)]">Finding routes…</p>}
         {sharedError && !isLoading && (
           <p role="alert" className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900">
-            {sharedError} Tap the map to start again.
+            {sharedError} Pick different points to try again.
           </p>
         )}
 
-        {end && !isLoading && !sharedError && (
-          <ul className="flex flex-col gap-2">
+        {/* Chyrons right after the route, before anything else, so they're in view on a phone (#68).
+            Before a route exists they stand by with their definitions, so Safer is always defined. */}
+        {!sharedError && (
+          <ul className="flex flex-col gap-2" aria-label="Route modes">
             {ROUTE_MODES.map((mode) => (
               <ModeCard
                 key={mode}
@@ -370,6 +417,15 @@ export default function Home() {
             ))}
           </ul>
         )}
+
+        <NearbyToggle
+          isOn={isNearbyOn}
+          notice={locationNotice}
+          onChange={(isOn) => {
+            setIsNearbyOn(isOn);
+            if (!isOn) setLocationNotice(null);
+          }}
+        />
 
         <MapLegend />
 
@@ -391,6 +447,18 @@ export default function Home() {
           onMapClick={handleMapClick}
           onSelectRoute={setSelectedMode}
         />
+        <div className="font-display pointer-events-none absolute top-4 left-4 z-[800] flex h-8 items-stretch overflow-hidden rounded-md bg-white text-[13px] font-bold tracking-[0.06em] uppercase shadow-[0_4px_14px_rgba(11,37,69,0.12)]">
+          <span className="flex items-center bg-[var(--navy)] px-2.5 tracking-[0.12em] text-white">Live</span>
+          <span className="flex items-center px-3 text-[var(--storm)]">
+            Sidewalk reports · {reports.length}
+            {reportsUpdatedAt && (
+              <span className="ml-2 text-[var(--navy)]">
+                Updated {reportsUpdatedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+              </span>
+            )}
+          </span>
+        </div>
+        <ReportCrawl reports={reports} />
         {promptSegment && (
           <NearbyPrompt
             segment={promptSegment}
@@ -414,13 +482,59 @@ export default function Home() {
           <button
             type="button"
             onClick={openReportSheet}
-            className="absolute right-4 bottom-4 z-[900] rounded-full bg-[var(--navy)] px-5 py-3 font-semibold text-white shadow-[0_8px_24px_rgba(16,42,67,0.35)] hover:bg-[#1d3d5c] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--navy)]"
+            id="report-button"
+            className="font-display absolute right-4 bottom-14 z-[900] rounded-lg bg-[var(--navy)] px-5 py-3 text-lg font-bold tracking-[0.04em] text-white uppercase shadow-[0_6px_18px_rgba(11,37,69,0.35)] hover:bg-[var(--storm)] focus-visible:outline-[var(--sky)] focus-visible:outline-offset-[-5px]"
           >
+            <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden className="mr-2 inline-block align-[-3px]">
+              <circle cx="9" cy="9" r="7.5" fill="none" stroke="currentColor" strokeWidth="2" />
+              <path d="M9 5v5M9 12.6v.4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
             Report blocked sidewalk
           </button>
         )}
       </div>
     </main>
+  );
+}
+
+// The crawl's own SIMULATED treatment, reused wherever demo data is labeled (#68).
+function SimulatedBadge() {
+  return (
+    <span className="font-display shrink-0 rounded-sm bg-[var(--navy)] px-1.5 py-0.5 text-[12px] font-bold tracking-[0.1em] text-white">
+      SIMULATED
+    </span>
+  );
+}
+
+function choiceLabel(choice: string): string {
+  if (choice === MY_LOCATION) return "My location";
+  if (choice === MAP_POINT) return "Point on the map";
+  return LANDMARKS.find((landmark) => landmark.id === choice)?.name ?? "Point on the map";
+}
+
+type RouteSummaryProps = { from: string; to: string; onEdit: () => void };
+
+// With a route on screen, From/To fold into one A → B row so the chyrons stay in view (#68).
+function RouteSummary({ from, to, onEdit }: RouteSummaryProps) {
+  return (
+    <div className="flex items-center gap-3">
+      <p className="min-w-0 flex-1 text-sm leading-relaxed font-semibold text-[var(--navy)]">
+        <span className="whitespace-nowrap">
+          <span className="lumi-pin lumi-pin--start mr-1 scale-75 align-middle" aria-hidden>A</span>
+          {from}
+        </span>
+        <span aria-hidden className="mx-1.5 text-[var(--storm)]">→</span>
+        <span className="whitespace-nowrap">
+          <span className="lumi-pin lumi-pin--end mr-1 scale-75 align-middle" aria-hidden>B</span>
+          {to}
+        </span>
+        <span className="sr-only">{`Route from ${from} to ${to}`}</span>
+      </p>
+      {/* Change start, Change end and New route live in edit mode, so this row stays one line. */}
+      <button type="button" onClick={onEdit} className="shrink-0 text-sm font-semibold text-[var(--storm)] underline underline-offset-2">
+        Edit route
+      </button>
+    </div>
   );
 }
 
@@ -464,35 +578,80 @@ type ModeCardProps = {
   onSelect: () => void;
 };
 
+function LineSwatch({
+  color,
+  dashArray,
+  casing,
+}: {
+  color: string;
+  dashArray?: string;
+  casing: { color: string; opacity: number };
+}) {
+  return (
+    <svg width="28" height="10" aria-hidden className="shrink-0">
+      <line x1="2" y1="5" x2="26" y2="5" stroke={casing.color} strokeOpacity={casing.opacity} strokeWidth="9" strokeLinecap="round" />
+      <line x1="2" y1="5" x2="26" y2="5" stroke={color} strokeWidth="5" strokeLinecap="round" strokeDasharray={dashArray} />
+    </svg>
+  );
+}
+
+// A lower-third chyron per mode. The chosen one floods with its mode's colour
+// and sets its walking minutes at poster scale (#68).
 function ModeCard({ mode, outcome, isSelected, onSelect }: ModeCardProps) {
   const style = MODE_STYLES[mode];
-  const summary =
-    outcome?.status === "ok"
-      ? `${walkingMinutes(outcome.route.distance_m)} min · ${Math.round(outcome.route.distance_m)} m`
-      : (outcome?.message ?? "");
+  const route = outcome?.status === "ok" ? outcome.route : null;
+  const minutes = route ? walkingMinutes(route.distance_m) : null;
+  const metres = route ? `${Math.round(route.distance_m).toLocaleString()} m` : null;
+  const errorText = outcome?.status === "error" ? outcome.message : null;
+
+  if (isSelected) {
+    return (
+      <li>
+        <button
+          type="button"
+          onClick={onSelect}
+          aria-pressed
+          className="grid w-full grid-cols-[1fr_auto] gap-x-3 gap-y-1 rounded-lg px-4 py-3 text-left"
+          style={{ background: style.color, color: style.ink }}
+        >
+          <span className="font-display flex items-center gap-2 text-[19px] leading-none font-bold tracking-[0.05em] uppercase">
+            {style.label}
+            <span className="rounded-sm border border-current/50 px-1.5 py-0.5 text-[11px] tracking-[0.12em]">Selected</span>
+          </span>
+          <span className="font-display self-center text-base font-semibold">{metres}</span>
+          {minutes !== null && (
+            <span className="font-display flex items-baseline gap-1.5 text-[64px] leading-[0.86] font-extrabold tracking-[-0.02em]">
+              {minutes}
+              <span className="text-xl font-bold tracking-[0.08em] uppercase opacity-80">min</span>
+            </span>
+          )}
+          <span className="max-w-[11rem] self-end text-[13px] leading-snug">
+            {errorText ?? MODE_SUMMARIES[mode]}
+            {mode === "accessible" && <span className="mt-1 block font-semibold">{ACCESSIBLE_LIMITATION}</span>}
+          </span>
+        </button>
+      </li>
+    );
+  }
 
   return (
     <li>
       <button
         type="button"
         onClick={onSelect}
-        aria-pressed={isSelected}
-        className={`w-full rounded-xl border-2 p-3 text-left transition-colors focus-visible:outline-2 focus-visible:outline-[var(--navy)] ${
-          isSelected ? "border-[var(--navy)] bg-[var(--ice)]" : "border-transparent bg-[var(--snow)] hover:border-[var(--frost)]"
-        }`}
+        aria-pressed={false}
+        className="grid w-full grid-cols-[auto_1fr_auto] items-center gap-x-3 rounded-lg border border-[var(--frost)] bg-white px-3 py-2.5 text-left transition-colors hover:border-[var(--storm)]"
       >
-        <span className="flex items-center gap-2">
-          <span className="h-1.5 w-6 rounded-full" style={{ background: style.color }} aria-hidden />
-          <span className="font-semibold text-[var(--navy)]">{style.label}</span>
-          <span className="ml-auto text-sm text-[var(--muted)]">{summary}</span>
+        <LineSwatch color={style.color} dashArray={style.dashArray} casing={style.casing} />
+        <span className="font-display text-[19px] leading-none font-bold tracking-[0.05em] text-[var(--navy)] uppercase">{style.label}</span>
+        <span className="font-display text-base font-semibold text-[var(--navy)]">
+          {errorText ? "" : `${minutes ?? "–"} min`}
+          {metres && <span className="ml-2 text-[var(--storm)]">{metres}</span>}
         </span>
-        <span className="mt-1 block text-xs text-[var(--muted)]">{MODE_SUMMARIES[mode]}</span>
-        {mode === "accessible" && (
-          <span className="mt-1 block text-xs font-medium text-amber-800">{ACCESSIBLE_LIMITATION}</span>
-        )}
-        {isSelected && outcome?.status === "ok" && (
-          <span className="mt-2 block text-sm leading-snug text-[var(--navy)]">{outcome.route.mode_description}</span>
-        )}
+        <span className="col-span-2 col-start-2 mt-1 text-[13px] leading-snug text-[var(--storm)]">
+          {errorText ?? MODE_SUMMARIES[mode]}
+          {mode === "accessible" && <span className="mt-0.5 block font-semibold text-[var(--navy)]">{ACCESSIBLE_LIMITATION}</span>}
+        </span>
       </button>
     </li>
   );

@@ -24,7 +24,7 @@ export default function RoutePicker({ from, to, isLocating, onFromChange, onToCh
 
   return (
     <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2">
-      <label htmlFor={fromId} className="text-sm font-semibold text-[var(--navy)]">
+      <label htmlFor={fromId} className="font-display text-[15px] font-bold tracking-[0.05em] text-[var(--navy)] uppercase">
         From <span className="lumi-pin lumi-pin--start ml-1 scale-75 align-middle" aria-hidden>A</span>
       </label>
       <select id={fromId} className={selectClass} value={from} onChange={(event) => onFromChange(event.target.value)}>
@@ -38,7 +38,7 @@ export default function RoutePicker({ from, to, isLocating, onFromChange, onToCh
         ))}
       </select>
 
-      <label htmlFor={toId} className="text-sm font-semibold text-[var(--navy)]">
+      <label htmlFor={toId} className="font-display text-[15px] font-bold tracking-[0.05em] text-[var(--navy)] uppercase">
         To <span className="lumi-pin lumi-pin--end ml-1 scale-75 align-middle" aria-hidden>B</span>
       </label>
       <select id={toId} className={selectClass} value={to} onChange={(event) => onToChange(event.target.value)}>

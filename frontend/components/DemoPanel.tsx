@@ -60,15 +60,17 @@ export default function DemoPanel({ route, onChanged }: Props) {
       return `Demo reset: removed ${result.data.removed} simulated reports and votes.`;
     });
 
+  // Flat pills, not cards inside the panel; disabled stays readable (#68).
   const buttonClass =
-    "rounded-xl border-2 border-amber-600 px-3 py-2 text-left text-sm font-semibold text-amber-950 hover:bg-amber-100 disabled:opacity-40";
+    "font-display self-start rounded-full bg-[var(--navy)] px-4 py-2 text-[15px] font-bold tracking-[0.04em] text-white uppercase hover:bg-[var(--storm)] disabled:bg-transparent disabled:text-[var(--storm)] disabled:ring-1 disabled:ring-[var(--frost)]";
 
   return (
-    <section aria-labelledby="demo-title" className="rounded-xl border-2 border-dashed border-amber-500 bg-amber-50 p-3">
-      <h2 id="demo-title" className="text-sm font-bold text-amber-950">
-        Demo controls · simulated people
+    <section aria-labelledby="demo-title" className="rounded-lg border border-[var(--frost)] bg-white p-3">
+      <h2 id="demo-title" className="font-display flex items-center gap-2 text-base font-bold tracking-[0.04em] text-[var(--navy)] uppercase">
+        <span className="rounded-sm bg-[var(--navy)] px-1.5 py-0.5 text-[12px] tracking-[0.1em] text-white">SIMULATED</span>
+        Demo controls
       </h2>
-      <p className="mt-0.5 text-xs text-amber-900">Only shown in demo mode. Everything here is labeled Simulated.</p>
+      <p className="mt-0.5 text-xs text-pretty text-[var(--storm)]">Only shown in demo mode. Everything here is labeled Simulated.</p>
       <div className="mt-2 flex flex-col gap-2">
         <button type="button" className={buttonClass} disabled={isBusy || !route} onClick={blockOnRoute}>
           Block a sidewalk on this route
@@ -81,7 +83,7 @@ export default function DemoPanel({ route, onChanged }: Props) {
         </button>
       </div>
       {message && (
-        <p role="status" className="mt-2 text-sm text-amber-950">
+        <p role="status" className="mt-2 text-sm text-pretty text-[var(--navy)]">
           {message}
         </p>
       )}
