@@ -119,6 +119,47 @@ export function mockReports(): ApiResult<Report[]> {
   return { ok: true, data: mockReportList };
 }
 
+// --- Demo panel (#47). Mock routes don't react to blocks; these only exercise the panel.
+
+const demoSegmentPoints = new Map<string, LatLon>();
+
+export function mockNearestSegment(point: LatLon): ApiResult<{ segment_id: string }> {
+  const segmentId = `mock-demo-${demoSegmentPoints.size + 1}`;
+  demoSegmentPoints.set(segmentId, point);
+  return { ok: true, data: { segment_id: segmentId } };
+}
+
+export function mockDemoBlock(segmentId: string): ApiResult<ReportResult> {
+  const report: Report = {
+    report_id: `r_demo${mockReportList.length + 1}`,
+    segment_id: segmentId,
+    location: demoSegmentPoints.get(segmentId) ?? [42.3504, -71.106],
+    verification: "confirmed",
+    reported_at: new Date().toISOString(),
+    simulated: true,
+  };
+  mockReportList = [...mockReportList, report];
+  return {
+    ok: true,
+    data: { report_id: report.report_id, segment_id: segmentId, outcome: "status_changed", segment_status: "blocked" },
+  };
+}
+
+export function mockDemoVotes(voters: number): ApiResult<{ votes_cast: number; outcome: VoteOutcome; segment_status: "open" | "blocked" }> {
+  const flips = voters >= 4;
+  return {
+    ok: true,
+    data: { votes_cast: voters, outcome: flips ? "status_changed" : "vote_recorded", segment_status: flips ? "open" : "blocked" },
+  };
+}
+
+export function mockDemoReset(): ApiResult<{ removed: number }> {
+  const kept = mockReportList.filter((report) => !report.report_id.startsWith("r_demo"));
+  const removed = mockReportList.length - kept.length;
+  mockReportList = kept;
+  return { ok: true, data: { removed } };
+}
+
 function midpoint(a: LatLon, b: LatLon): LatLon {
   return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
 }

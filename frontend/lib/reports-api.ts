@@ -86,7 +86,8 @@ function bearer(token: string): Record<string, string> {
   return { Authorization: `Bearer ${token}` };
 }
 
-async function request<T>(path: string, init: RequestInit): Promise<ApiResult<T>> {
+// Shared by the demo panel (lib/demo-api.ts).
+export async function request<T>(path: string, init: RequestInit): Promise<ApiResult<T>> {
   try {
     const response = await fetch(`${API_URL}${path}`, init);
     const body: unknown = await response.json().catch(() => null);
