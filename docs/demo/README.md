@@ -1,10 +1,12 @@
 # Lumi demo video
 
-**[lumi-demo.webm](lumi-demo.webm)**: 44 s, 1440×900, captions on screen, no sound. Recorded on 2026-11-22.
+The video itself is **not stored in git**: a 17 MB binary would stay in the repo's history forever, and every re-recording would add another. Recordings are uploaded as GitHub attachments or release assets and linked here.
+
+**Latest recording:** not linked yet. The first take (44 s, 1440×900, captions, no sound, 2026-11-22) was made on unmerged UI and the BU Bridge → Kenmore route, so it should be re-recorded once the UI stack is on `main`, on the agreed demo route (Warren Towers → Packard's Corner, see #8 and `docs/team/demo-script.md`).
 
 ![Lumi's first screen: the Boston weather strip, the How Lumi works panel, the From/To pickers and the three route modes beside the map](first-screen.png)
 
-## What it shows
+## What the first take showed
 
 1. The first screen: live Boston weather and the How Lumi works panel.
 2. BU Bridge → Kenmore Square: 1,639 m, about a mile.
@@ -37,6 +39,6 @@ It was recorded from the Storm Center redesign plus the frontend additions, whic
    NEXT_PUBLIC_API_URL=http://127.0.0.1:8100 npm run build
    npx next start -p 3300
    ```
-3. In an empty folder: `npm i playwright`, `npx playwright install chromium ffmpeg`, copy `record.js` there, and run `node record.js`. The video lands in `video/`.
+3. In an empty folder: `npm i playwright`, `npx playwright install chromium ffmpeg`, copy `record.js` there, and run `node record.js`. The video lands in `video/`. Upload it (drag it into a GitHub comment, or attach it to a release) and link it above; don't commit it.
 
 The ports are 3300 and 8100 so a normal dev setup on 3000 and 8000 can keep running. The script resets the demo first. It waits for the page content, not for the network to go quiet: Clerk's background check can hang for about 20 s on some networks.
