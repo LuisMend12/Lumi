@@ -78,6 +78,34 @@ def test_route_rejects_invalid_latitude(client):
     assert response.status_code == 422
 
 
+def test_validation_error_detail_is_one_readable_string(client):
+    response = client.get("/route", params={**A_TO_D, "start_lat": 123, "mode": "shortest"})
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "start_lat: Input should be less than or equal to 90"
+
+
+def test_validation_errors_for_several_fields_are_joined(client):
+    params = {"start_lat": 123, "end_lat": 42.35, "end_lon": -71.1}  # start_lon missing
+
+    response = client.get("/route", params=params)
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert isinstance(detail, str)
+    assert "start_lat: Input should be less than or equal to 90" in detail
+    assert "start_lon: Field required" in detail
+
+
+def test_invalid_vote_body_detail_is_a_string(client):
+    response = client.post(
+        "/segments/A-B/votes", json={"blocked": True, "lat": 999, "lon": -71.1}, headers={"X-User-Id": "alice"}
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "lat: Input should be less than or equal to 90"
+
+
 def test_route_returns_404_when_no_path_exists(street_graph):
     blocked = Hazard(kind="snowbank", severity=1.0, blocked=True)
     hazards = {segment_key("A", "B"): [blocked], segment_key("A", "C"): [blocked]}
