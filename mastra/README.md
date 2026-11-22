@@ -37,6 +37,8 @@ npm run start    # serves .mastra/output; same as: node .mastra/output/index.mjs
 
 Set `PORT` to use another port, and point the backend at it with `LUMI_MASTRA_URL` (default `http://localhost:4111`).
 
+In Docker, `mastra/Dockerfile` builds the bundle and runs it as a non-root user, listening on `0.0.0.0:4111` inside the container (`MASTRA_HOST`). `docker-compose.yml` at the repo root runs it next to the backend without publishing the port; see `docs/team/deploy.md`.
+
 Checks:
 
 ```bash

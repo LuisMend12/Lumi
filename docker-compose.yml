@@ -1,0 +1,38 @@
+# Lumi backend + Mastra photo agent on one server (issue #15).
+#   docker compose up -d --build
+# The frontend deploys separately (e.g. Vercel) with NEXT_PUBLIC_API_URL pointing
+# at the backend's public HTTPS URL. See docs/team/deploy.md.
+
+name: lumi
+
+services:
+  backend:
+    build: ./backend
+    env_file:
+      - path: ./backend/.env
+        required: false # without it: in-memory reports, and reports/votes answer 503 (no Clerk)
+    environment:
+      # The compose network name, not localhost. Overrides backend/.env.
+      LUMI_MASTRA_URL: http://mastra:4111
+      # LUMI_DEMO_MODE=1 docker compose up -d   adds the /demo endpoints.
+      # Set it in the shell or a repo-root .env; this line overrides backend/.env.
+      LUMI_DEMO_MODE: ${LUMI_DEMO_MODE:-0}
+    ports:
+      - "8000:8000" # put HTTPS (e.g. Caddy) in front of this
+    depends_on:
+      mastra:
+        condition: service_started
+    restart: unless-stopped
+    # Health check comes from backend/Dockerfile (GET /health).
+
+  mastra:
+    build: ./mastra
+    env_file:
+      - path: ./mastra/.env
+        required: false # without the Gemini key, POST /review answers 502 and reports stay pending
+    # No ports: only the backend reaches it, over the compose network.
+    # Never publish 4111: Mastra also serves its built-in agent API and Studio,
+    # so anyone who can reach it can spend the Gemini quota.
+    expose:
+      - "4111"
+    restart: unless-stopped
