@@ -262,7 +262,10 @@ export default function Home() {
           notice={locationNotice}
           onChange={(isOn) => {
             setIsNearbyOn(isOn);
-            if (!isOn) setLocationNotice(null);
+            if (!isOn) {
+              setLocationNotice(null);
+              setNearby(null); // don't flash an old sidewalk question when checks are turned back on
+            }
           }}
         />
         {isLoading && <p className="text-sm text-[var(--muted)]">Finding routes…</p>}
