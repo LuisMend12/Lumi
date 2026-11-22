@@ -42,7 +42,7 @@ Shortest is **871 m** down the Blandford Street steps; Accessible is **1,085 m**
 | 3 | **Demo controls → Block a sidewalk on this route** | "Someone reports a snowbank halfway along. A person reports it; the AI only checks the photo. AI alone never blocks a sidewalk." | All three routes redraw around it, ≈1,715 m; a **Simulated** marker. (The button blocks the sidewalk nearest the route's halfway point.) |
 | 4 | Point at the marker | "Every report says whether it's confirmed, unverified, or under review. Demo data is labeled Simulated." | Marker tooltip "Simulated · Report · Confirmed" |
 | 5 | **4 bots say it's clear** | "To clear a block, four *different* signed-in people nearby have to say so, like Waze's closures. These four are simulated people." | Message "4 simulated people said it's clear…"; the route returns to ≈1,631 m |
-| 6 | Optional: **Report blocked sidewalk** on a phone | "On a phone, you take a photo, and Lumi uses your location only while the app is open." | Photo sheet; outcome message |
+| 6 | Optional: **Report blocked sidewalk** with a photo | "On a phone, you take a photo, and Lumi uses your location only while the app is open." | Photo sheet; outcome message. **On the laptop**, pick a photo file in the sheet. **A phone only works with the deployed HTTPS site** (#15): with this local setup, `localhost` on a phone means the phone itself, and phones only share location on HTTPS pages |
 | 7 | **Reset demo**, then tap **Questrom**, then the **St. Mary's St T stop** | "Accessible skips stairs. Here the shortest walk goes down the Blandford Street steps." | Shortest ≈871 m; **Accessible ≈1,085 m** on a different path, with its limitation note: no curb-ramp data yet |
 
 ## Points to make honestly
@@ -61,4 +61,4 @@ Shortest is **871 m** down the Blandford Street steps; Accessible is **1,085 m**
 | Report or vote says sign in again | Sign in from the header. Clerk tokens last about a minute and are refreshed per request |
 | Photo stays "Under review" | Mastra or the Gemini key is down. Say: "the AI check is unavailable, so the report waits instead of changing routes. That's by design." (Retry is #53.) |
 | "No route avoids the blocked sidewalks." | Press **Reset demo**. A leftover simulated block may cut every path |
-| A phone doesn't show the change | Reload it. Other phones don't refresh automatically yet (#59) |
+| A second screen doesn't show the change | Wait up to 20 s: open pages refresh reports and routes every 20 s while visible (#59), or reload |
