@@ -13,6 +13,7 @@ import { fetchRoute, ROUTE_MODES, USE_MOCKS, type LatLon, type RouteMode, type R
 import { isDemoMode } from "@/lib/demo-api";
 import { LANDMARKS } from "@/lib/landmarks";
 import { getLocation } from "@/lib/device";
+import { createRequestTracker } from "@/lib/latest";
 import { ACCESSIBLE_LIMITATION, MODE_STYLES, MODE_SUMMARIES, walkingMinutes } from "@/lib/modes";
 import { VOTE_OUTCOME_TEXT } from "@/lib/reporting";
 import {
@@ -61,6 +62,9 @@ export default function Home() {
   const [toChoice, setToChoice] = useState("");
   const [isLocating, setIsLocating] = useState(false);
   const [pickerError, setPickerError] = useState<string | null>(null);
+  // A My location lookup can take seconds. Any newer start (another choice, a map tap,
+  // New route) wins, so a late GPS result or error can't override it (#67).
+  const [startChoice] = useState(createRequestTracker);
 
   // Reports to draw on the map, loaded once on open.
   useEffect(() => {
@@ -195,6 +199,7 @@ export default function Home() {
   async function handleMapClick(point: LatLon) {
     const { start: current, end: currentEnd } = pointsRef.current;
     if (!current) {
+      supersedeStartChoice();
       setFromChoice(MAP_POINT);
       await applyPoints(point, currentEnd);
       return;
@@ -206,6 +211,7 @@ export default function Home() {
     }
     // A finished route only changes on purpose: Change start / Change end / New route (#66).
     if (editing === "start") {
+      supersedeStartChoice();
       setFromChoice(MAP_POINT);
       await applyPoints(point, currentEnd);
     } else if (editing === "end") {
@@ -215,7 +221,7 @@ export default function Home() {
   }
 
   // A picker choice becomes a point: a landmark, or My location (read only on this tap).
-  async function pointForChoice(choice: string): Promise<LatLon | null> {
+  async function pointForChoice(choice: string, isCurrent: () => boolean = () => true): Promise<LatLon | null> {
     if (choice === MY_LOCATION) {
       setIsLocating(true);
       try {
@@ -223,18 +229,29 @@ export default function Home() {
         setIsNearbyOn(true); // the visitor just shared their location (#65)
         return location;
       } finally {
-        setIsLocating(false);
+        if (isCurrent()) setIsLocating(false);
       }
     }
     return LANDMARKS.find((landmark) => landmark.id === choice)?.point ?? null;
   }
 
+  // Any lookup for the start still in flight is now stale.
+  function supersedeStartChoice() {
+    startChoice.cancel();
+    setIsLocating(false);
+  }
+
   async function handleFromChange(choice: string) {
     const previous = fromChoice;
+    setIsLocating(false);
+    const isCurrent = startChoice.begin();
     setFromChoice(choice);
     try {
-      await applyPoints(await pointForChoice(choice), pointsRef.current.end);
+      const point = await pointForChoice(choice, isCurrent);
+      if (!isCurrent()) return; // a newer start was picked while we waited for the location
+      await applyPoints(point, pointsRef.current.end);
     } catch (error: unknown) {
+      if (!isCurrent()) return;
       setFromChoice(previous);
       setPickerError(error instanceof Error ? error.message : "Couldn't get your location.");
     }
@@ -246,6 +263,7 @@ export default function Home() {
   }
 
   function startNewRoute() {
+    supersedeStartChoice();
     setFromChoice("");
     setToChoice("");
     void applyPoints(null, null);
