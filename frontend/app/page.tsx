@@ -237,10 +237,12 @@ export default function Home() {
     if (nextStart && nextEnd) setIsEditingRoute(false);
     setPickerError(null);
     setPoints(nextStart, nextEnd);
+    // Clear the old route first: its lines shouldn't sit between the new pins while the new
+    // route loads, and the map fits the new route, not the old one (#68).
+    setOutcomes({});
     if (nextStart && nextEnd) {
       await loadRoutes(nextStart, nextEnd);
     } else {
-      setOutcomes({});
       setIsLoading(false);
     }
   }
@@ -708,6 +710,12 @@ function ModeCard({ mode, outcome, isSelected, onSelect }: ModeCardProps) {
             {errorText ?? MODE_SUMMARIES[mode]}
             {mode === "accessible" && <span className="mt-1 block font-semibold">{ACCESSIBLE_LIMITATION}</span>}
           </span>
+          {/* The backend's own wording for the chosen mode, limits included (team rule: reuse it). */}
+          {route && (
+            <span className="col-span-2 mt-1 border-t border-current/30 pt-1.5 text-[12px] leading-snug">
+              {route.mode_description}
+            </span>
+          )}
         </button>
       </li>
     );
