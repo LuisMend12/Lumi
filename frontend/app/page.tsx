@@ -448,7 +448,10 @@ export default function Home() {
             {hasRoute && (
               <button
                 type="button"
-                onClick={() => setIsEditingRoute(false)}
+                onClick={() => {
+                  setIsEditingRoute(false);
+                  setEditing(null);
+                }}
                 className="self-start text-sm font-semibold text-[var(--storm)] underline underline-offset-2"
               >
                 Done editing

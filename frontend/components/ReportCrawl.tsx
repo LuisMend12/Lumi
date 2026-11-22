@@ -105,7 +105,12 @@ export default function ReportCrawl({ reports }: Props) {
       {reports.length === 0 ? (
         <p className="flex items-center px-4">No sidewalk reports right now.</p>
       ) : (
-        <div ref={stripRef} className="lumi-crawl-strip min-w-0 flex-1 overflow-hidden">
+        <div
+          ref={stripRef}
+          className="lumi-crawl-strip min-w-0 flex-1 overflow-hidden focus-visible:outline-[var(--sky)] focus-visible:outline-offset-[-3px]"
+          tabIndex={isOverflowing ? 0 : undefined}
+          aria-label={isOverflowing ? "Report list. Focus pauses it; with reduced motion, scroll with the arrow keys." : undefined}
+        >
           <div
             className={`flex h-full w-max items-center whitespace-nowrap ${isOverflowing ? "lumi-crawl" : ""}`}
             style={isPaused ? { animationPlayState: "paused" } : undefined}

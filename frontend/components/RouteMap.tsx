@@ -52,16 +52,20 @@ function ReportMarker({ report }: { report: Report }) {
   );
 }
 
-// When a new route appears (new start or end), fit it in view; switching modes or the
-// 20 s refresh leaves the map where the visitor put it.
-function FitRoute({ coordinates, routeKey }: { coordinates: LatLon[] | null; routeKey: string }) {
+// When a route between new points appears, fit it in view. The key is the route's own
+// endpoints, so the previous route's coordinates (still shown while the new one loads)
+// never use up the fit. Switching modes, the 20 s refresh and detours keep the same
+// endpoints, so they leave the map where the visitor put it.
+function FitRoute({ coordinates }: { coordinates: LatLon[] | null }) {
   const map = useMap();
   const fittedKey = useRef<string | null>(null);
   useEffect(() => {
-    if (!coordinates || coordinates.length < 2 || fittedKey.current === routeKey) return;
+    if (!coordinates || coordinates.length < 2) return;
+    const routeKey = `${coordinates[0]}|${coordinates[coordinates.length - 1]}`;
+    if (fittedKey.current === routeKey) return;
     fittedKey.current = routeKey;
     map.fitBounds(L.latLngBounds(coordinates), { paddingTopLeft: [24, 64], paddingBottomRight: [24, 120] });
-  }, [coordinates, routeKey, map]);
+  }, [coordinates, map]);
   return null;
 }
 
@@ -127,7 +131,7 @@ export default function RouteMap({
         interactive={false}
       />
       <ClickHandler onMapClick={onMapClick} />
-      <FitRoute coordinates={selectedRoute?.coordinates ?? null} routeKey={`${start}|${end}`} />
+      <FitRoute coordinates={selectedRoute?.coordinates ?? null} />
       {reports.map((report) => (
         <ReportMarker key={report.report_id} report={report} />
       ))}
