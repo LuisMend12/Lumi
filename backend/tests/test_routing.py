@@ -195,3 +195,24 @@ def test_accessible_has_no_route_when_only_stairs_connect(street_graph):
 
     with pytest.raises(NoRouteError):
         find_route(street_graph, "A", "D", RouteMode.ACCESSIBLE, hazards={})
+
+
+def test_accessible_no_route_message_says_step_free(street_graph):
+    add_stairs(street_graph, "A", "B", 100.0)
+    add_stairs(street_graph, "A", "C", 150.0)
+
+    with pytest.raises(NoRouteError) as raised:
+        find_route(street_graph, "A", "D", RouteMode.ACCESSIBLE, hazards={})
+
+    assert str(raised.value) == (
+        "No step-free route found: every way between these points uses stairs or a blocked sidewalk."
+    )
+
+
+def test_no_route_message_is_readable_and_has_no_node_ids(street_graph):
+    hazards = {segment_key("A", "B"): [SNOWBANK], segment_key("A", "C"): [SNOWBANK]}
+
+    with pytest.raises(NoRouteError) as raised:
+        find_route(street_graph, "A", "D", RouteMode.SAFER, hazards)
+
+    assert str(raised.value) == "No route found: every way between these points uses a blocked sidewalk."

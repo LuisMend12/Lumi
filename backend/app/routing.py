@@ -129,7 +129,11 @@ def find_route(
     try:
         nodes = nx.dijkstra_path(graph, start, end, weight=make_weight(mode, hazards))
     except nx.NetworkXNoPath as error:
-        raise NoRouteError(f"No route from {start} to {end} avoids blocked sidewalks") from error
+        if mode is RouteMode.ACCESSIBLE:  # Accessible also skips stairs, so say so (#33)
+            message = "No step-free route found: every way between these points uses stairs or a blocked sidewalk."
+        else:
+            message = "No route found: every way between these points uses a blocked sidewalk."
+        raise NoRouteError(message) from error
 
     segments = list(zip(nodes, nodes[1:]))
     coordinates = [_lat_lon(graph, nodes[0])]
