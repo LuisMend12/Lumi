@@ -16,6 +16,8 @@ backend/cache/
 # Node
 node_modules/
 .next/
+# Mastra build output (mastra dev / mastra build)
+.mastra/
 
 # Local tool state
 .claude/settings.local.json
