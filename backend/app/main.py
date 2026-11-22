@@ -43,7 +43,7 @@ from app.routing import (
     nearest_node,
     nearest_step_free,
     segment_key,
-    step_free_network,
+    step_free_components,
 )
 from app.routing import segment_id as make_segment_id
 from app.segments import SegmentIndex
@@ -176,7 +176,8 @@ def create_app(
     # Set at startup by `lifespan`; the endpoints below read them.
     street_graph: nx.DiGraph
     segments: SegmentIndex
-    step_free: set  # intersections Accessible can reach without stairs (#33)
+    step_free_group: dict  # node -> id of its stairs-free group; 0 = the main step-free network (#33)
+    step_free: set  # the main step-free network: every node in group 0
     reports: SegmentReports
     report_store: PostgresReportStore | MemoryReportStore  # every write goes here first, then to `reports`
     simulated_ids: set[str] = set()  # photo reports created by /demo endpoints, shown as "Simulated"
@@ -207,10 +208,11 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        nonlocal street_graph, segments, step_free, report_store
+        nonlocal street_graph, segments, step_free_group, step_free, report_store
         street_graph = graph if graph is not None else load_street_graph()
         segments = SegmentIndex(street_graph)
-        step_free = step_free_network(street_graph)
+        step_free_group = step_free_components(street_graph)
+        step_free = {node for node, group_id in step_free_group.items() if group_id == 0}
         report_store = store if store is not None else default_store()
         replayed = rebuild_from_store()
         logger.info("Rebuilt segment status from %d stored reports", replayed)
@@ -259,7 +261,9 @@ def create_app(
         start = _snap(street_graph, start_lat, start_lon, "Start")
         end = _snap(street_graph, end_lat, end_lon, "Destination")
         notices = []
-        if mode is RouteMode.ACCESSIBLE:
+        # Snap only when no step-free path joins the two ends: two spots on the same
+        # stairs-only plaza can still route between themselves without stairs.
+        if mode is RouteMode.ACCESSIBLE and step_free_group[start] != step_free_group[end]:
             start, start_notice = _step_free(street_graph, start, step_free, "start", "starts")
             end, end_notice = _step_free(street_graph, end, step_free, "destination", "ends")
             notices = [n for n in (start_notice, end_notice) if n]

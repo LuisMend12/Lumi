@@ -11,6 +11,7 @@ from app.routing import (
     nearest_step_free,
     segment_id,
     segment_key,
+    step_free_components,
     step_free_network,
 )
 
@@ -250,3 +251,22 @@ def test_stairs_only_spot_snaps_to_the_nearest_step_free_point(street_graph):
 
     assert node == "A"
     assert 25 < distance_m < 31
+
+
+def add_step_free_island(graph) -> None:
+    """E and F: a two-node plaza joined by a step-free path, reachable from A only by stairs."""
+    add_stairs_only_spot(graph, "E", 42.35025, -71.1080)
+    graph.add_node("F", y=42.35025, x=-71.1077)  # about 25 m east of E
+    for u, v in [("E", "F"), ("F", "E")]:
+        graph.add_edge(u, v, length=25.0, highway="footway")
+
+
+def test_step_free_components_group_an_island_apart_from_the_main_network(street_graph):
+    add_step_free_island(street_graph)
+
+    groups = step_free_components(street_graph)
+
+    assert groups["E"] == groups["F"]  # a step-free path joins them
+    assert groups["E"] != groups["A"]
+    assert {node for node, group in groups.items() if group == 0} == {"A", "B", "C", "D"}
+    assert step_free_network(street_graph) == {"A", "B", "C", "D"}

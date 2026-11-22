@@ -220,3 +220,37 @@ def test_accessible_route_without_stairs_has_no_notice(client):
     body = client.get("/route", params={**A_TO_D, "mode": "accessible"}).json()
 
     assert body["notice"] is None
+
+
+def step_free_island(street_graph) -> None:
+    """E and F: a two-node plaza joined by a step-free path; only stairs lead from A to E."""
+    stairs_only_spot(street_graph, 42.35025, -71.1080)
+    street_graph.add_node("F", y=42.35025, x=-71.1077)  # about 25 m east of E
+    for u, v in [("E", "F"), ("F", "E")]:
+        street_graph.add_edge(u, v, length=25.0, highway="footway")
+
+
+def test_accessible_route_inside_a_step_free_island_does_not_snap(street_graph):
+    step_free_island(street_graph)
+    e_to_f = {"start_lat": 42.35025, "start_lon": -71.1080, "end_lat": 42.35025, "end_lon": -71.1077}
+    with TestClient(create_app(graph=street_graph)) as client:
+        response = client.get("/route", params={**e_to_f, "mode": "accessible"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["distance_m"] == 25.0  # E to F directly, no stairs
+    assert body["snapped_start"] == [42.35025, -71.1080]
+    assert body["snapped_end"] == [42.35025, -71.1077]
+    assert body["notice"] is None
+
+
+def test_accessible_from_an_island_to_the_main_network_snaps_only_the_island_end(street_graph):
+    step_free_island(street_graph)
+    f_to_d = {"start_lat": 42.35025, "start_lon": -71.1077, "end_lat": 42.3500, "end_lon": -71.1056}
+    with TestClient(create_app(graph=street_graph)) as client:
+        body = client.get("/route", params={**f_to_d, "mode": "accessible"}).json()
+
+    assert body["snapped_start"] == [42.3500, -71.1080]  # F moved to A, the nearest step-free point
+    assert body["snapped_end"] == [42.3500, -71.1056]  # D is already step-free
+    assert body["notice"].startswith("Your start is only reachable by stairs")
+    assert "destination" not in body["notice"]
