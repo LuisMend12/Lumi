@@ -66,7 +66,6 @@ class Route:
 class RouteHazard(Hazard):
     """A hazard on a segment the route uses, plus where it is. /route returns these as-is."""
 
-    segment_id: str  # "<u>-<v>", smaller node id first
     location: tuple[float, float]  # (lat, lon) segment midpoint, where the warning goes on the map
 
 
@@ -126,7 +125,7 @@ def find_route(
         coordinates=coordinates,
         distance_m=sum(graph.edges[u, v]["length"] for u, v in segments),
         hazards=[
-            RouteHazard(**asdict(h), segment_id=segment_id(u, v), location=_midpoint(graph, u, v))
+            RouteHazard(**asdict(h), location=_midpoint(graph, u, v))
             for u, v in segments
             for h in hazards.get(segment_key(u, v), [])
         ],

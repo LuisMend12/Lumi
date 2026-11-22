@@ -56,7 +56,7 @@ The response has these fields:
 - `mode_description`: plain-language text to show the user
 - `distance_m`
 - `coordinates`: a list of `[lat, lon]` pairs in walking order
-- `hazards`: reported hazards on the segments the route still uses
+- `hazards`: reported hazards on the segments the route still uses, each with `location` (segment midpoint), `kind`, `severity` and `blocked`
 
 | Status | Meaning |
 |---|---|

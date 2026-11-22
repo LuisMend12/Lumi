@@ -37,19 +37,17 @@ def test_shortest_goes_through_ice_but_reports_it(street_graph):
     assert route.nodes == ["A", "B", "D"]
     [route_hazard] = route.hazards
     assert isinstance(route_hazard, RouteHazard)
-    assert route_hazard.segment_id == "A-B"
     assert route_hazard.location == pytest.approx((42.3500, -71.1074))
     assert (route_hazard.kind, route_hazard.severity, route_hazard.blocked) == ("ice", 0.9, False)
 
 
-def test_route_hazard_location_is_segment_midpoint_and_id_is_direction_free(street_graph):
-    # Reported on B-D, walked B->D; the id still puts the smaller node first.
+def test_route_hazard_location_is_segment_midpoint_in_either_direction(street_graph):
+    # Reported as D-B, walked B->D.
     hazards = hazards_on("D", "B", ICE)
 
     route = find_route(street_graph, "A", "D", RouteMode.SHORTEST, hazards)
 
     [route_hazard] = route.hazards
-    assert route_hazard.segment_id == "B-D"
     assert route_hazard.location == pytest.approx((42.3500, -71.1062))
     assert route_hazard.kind == "ice"
 

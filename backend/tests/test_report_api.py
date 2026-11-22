@@ -350,7 +350,7 @@ def test_static_hazards_and_reported_blocks_are_merged(street_graph):
         body = client.get("/route", params={**A_TO_D, "mode": "safer"}).json()
 
     assert body["distance_m"] == pytest.approx(300.0)  # A-B blocked, so through the ice on C-D
-    assert [(h["segment_id"], h["kind"]) for h in body["hazards"]] == [("C-D", "ice")]
+    assert [(h["location"], h["kind"]) for h in body["hazards"]] == [(pytest.approx(list(NEAR["C-D"])), "ice")]
 
 
 # --- CORS ------------------------------------------------------------------
