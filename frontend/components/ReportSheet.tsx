@@ -6,7 +6,7 @@ import { REPORT_OUTCOME_TEXT } from "@/lib/reporting";
 import { submitReport, type ReportResult } from "@/lib/reports-api";
 
 type Props = {
-  userId: string; // signed-in Clerk user; the page asks for sign-in before opening the sheet
+  getToken: () => Promise<string | null>; // Clerk session token; the page asks for sign-in before opening the sheet
   notice: string | null; // e.g. why a photo is required
   onClose: () => void;
   onReported: (result: ReportResult) => void;
@@ -14,7 +14,7 @@ type Props = {
 
 type Stage = { kind: "editing" } | { kind: "sending" } | { kind: "done"; message: string } | { kind: "error"; message: string };
 
-export default function ReportSheet({ userId, notice, onClose, onReported }: Props) {
+export default function ReportSheet({ getToken, notice, onClose, onReported }: Props) {
   const [photo, setPhoto] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [stage, setStage] = useState<Stage>({ kind: "editing" });
@@ -32,7 +32,9 @@ export default function ReportSheet({ userId, notice, onClose, onReported }: Pro
     setStage({ kind: "sending" });
     try {
       const [location, shrunk] = await Promise.all([getLocation(), shrinkPhoto(photo)]);
-      const result = await submitReport(userId, location, shrunk);
+      const token = await getToken(); // fetched last: Clerk tokens only last about a minute
+      if (!token) return setStage({ kind: "error", message: "Please sign in again, then try once more." });
+      const result = await submitReport(token, location, shrunk);
       if (!result.ok) return setStage({ kind: "error", message: result.message });
       setStage({ kind: "done", message: REPORT_OUTCOME_TEXT[result.data.outcome] });
       onReported(result.data);

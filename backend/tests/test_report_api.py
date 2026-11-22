@@ -10,7 +10,7 @@ from app.config import MAX_PHOTO_BYTES
 from app.main import SIGN_IN_INVALID, SIGN_IN_REQUIRED, create_app
 from app.reports import PhotoVerdict
 from app.routing import RouteMode
-from tests.conftest import auth_header
+from tests.test_photo_review import assessment, mastra  # noqa: F401  (`mastra` is a fixture)
 
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
@@ -99,16 +99,38 @@ def test_rejected_photo_is_unverified_and_leaves_segment_open(street_graph):
     assert response.json()["segment_status"] == "open"
 
 
-def test_without_a_reviewer_reports_stay_pending_and_a_warning_is_logged_once(street_graph, caplog):
-    with caplog.at_level(logging.WARNING), make_client(street_graph) as client:
-        first = report(client, user="alice")
-        report(client, user="bob")
+def test_default_reviewer_uses_mastra_and_confirms_a_blocked_photo(street_graph, mastra, monkeypatch):  # noqa: F811
+    monkeypatch.setenv("LUMI_MASTRA_URL", mastra.url)
 
-    assert first.status_code == 201
-    assert first.json()["outcome"] == "pending"
-    assert first.json()["segment_status"] == "open"
-    warnings = [r for r in caplog.records if "No photo reviewer" in r.getMessage()]
-    assert len(warnings) == 1
+    with make_client(street_graph) as client:
+        response = report(client)
+
+    assert response.status_code == 201
+    assert response.json()["outcome"] == "status_changed"
+    assert response.json()["segment_status"] == "blocked"
+    assert [r["path"] for r in mastra.requests] == ["/review"]
+
+
+def test_default_reviewer_marks_a_clear_photo_unverified(street_graph, mastra, monkeypatch):  # noqa: F811
+    monkeypatch.setenv("LUMI_MASTRA_URL", mastra.url)
+    mastra.answer(assessment(is_sidewalk_hazard=False, kind="none", severity="none", blocked=False))
+
+    with make_client(street_graph) as client:
+        response = report(client)
+
+    assert response.json()["outcome"] == "unverified"
+    assert response.json()["segment_status"] == "open"
+
+
+def test_with_mastra_down_reports_stay_pending_and_a_warning_is_logged(street_graph, caplog):
+    # conftest points LUMI_MASTRA_URL at a closed port.
+    with caplog.at_level(logging.WARNING), make_client(street_graph) as client:
+        response = report(client)
+
+    assert response.status_code == 201
+    assert response.json()["outcome"] == "pending"
+    assert response.json()["segment_status"] == "open"
+    assert any("Photo review unavailable" in r.getMessage() for r in caplog.records)
 
 
 def test_reviewer_that_crashes_counts_as_unavailable(street_graph):
