@@ -10,7 +10,7 @@
 - Coordinates are `[lat, lon]` arrays, matching what `/route` returns today.
 - `segment_id` is a string `"<u>-<v>"`, where `u` and `v` are the two OSM node IDs of the sidewalk segment with the smaller one first. Both walking directions share one ID.
 - Times are ISO 8601 UTC strings, for example `"2026-11-21T18:04:00Z"`.
-- Until login exists, the client sends a temporary `X-User-Id: <any stable string>` header on every write. The frontend can generate one and keep it in `localStorage`. The real ID comes from the login provider later (still undecided).
+- Writes (`POST /reports`, `POST /segments/{segment_id}/votes`) need sign-in (#14): send `Authorization: Bearer <token>`, where the token comes from Clerk's `getToken()`. The backend checks it against Clerk's public keys and uses the token's `sub` (the Clerk user ID) as the user. A missing or invalid token gets `401` with a readable `detail`. If the server has no Clerk settings, writes get `503`. Reads (`GET`) need no sign-in.
 - Errors come back as `{"detail": "<message a person can read>"}` with the status codes listed under each endpoint.
 
 ## `GET /route` (exists; small additions)

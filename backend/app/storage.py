@@ -31,7 +31,7 @@ SCHEMA = [
     CREATE TABLE IF NOT EXISTS reports (
         report_id   text             NOT NULL,  -- "r_..." for photo reports, "v_..." for votes
         segment_id  text             NOT NULL,  -- "<u>-<v>", smaller OSM node id first
-        user_id     text             NOT NULL,  -- X-User-Id until login exists
+        user_id     text             NOT NULL,  -- Clerk user id (token "sub"); older rows: X-User-Id
         lat         double precision NOT NULL,  -- where the user was
         lon         double precision NOT NULL,
         blocked     boolean          NOT NULL,  -- always true for photo reports

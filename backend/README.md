@@ -87,7 +87,7 @@ The response has these fields:
 
 ### Reports
 
-The full shapes are in [docs/team/api-contract.md](../docs/team/api-contract.md). Writes need an `X-User-Id` header (any stable string until login exists); without it they return `401`.
+The full shapes are in [docs/team/api-contract.md](../docs/team/api-contract.md). Writes need a Clerk session token in `Authorization: Bearer <token>` (see `app/auth.py`). Without one they return `401`, and if `CLERK_ISSUER` / `CLERK_JWKS_URL` aren't set they return `503`. Reads need no sign-in.
 
 | Endpoint | Success | Errors |
 |---|---|---|

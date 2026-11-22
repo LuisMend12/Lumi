@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from app.auth import InvalidToken, TokenVerifier, clerk_verifier_from_env
 from app.config import GRAPH_PATH, MAX_PHOTO_BYTES, MAX_SNAP_DISTANCE_M, NEARBY_RADIUS_M, frontend_origins
 from app.photo_review import detect_media_type, make_mastra_reviewer
 from app.reports import PhotoReviewer, PhotoVerdict, SegmentReports, SegmentStatus, new_report_id
@@ -110,15 +111,23 @@ def load_street_graph() -> nx.DiGraph:
 
 
 
-def require_user(x_user_id: Annotated[str | None, Header()] = None) -> str:
-    """Temporary identity until login exists: any stable string the client sends."""
-    user_id = (x_user_id or "").strip()
-    if not user_id:
-        raise HTTPException(
-            status_code=401,
-            detail="Missing X-User-Id header. Send a stable id for this device with every report or vote.",
-        )
-    return user_id
+SIGN_IN_REQUIRED = "Sign in to report or answer questions about sidewalks."
+SIGN_IN_INVALID = "Your sign-in has expired or isn't valid. Please sign in again."
+
+
+def require_user(request: Request, authorization: Annotated[str | None, Header()] = None) -> str:
+    """The signed-in Clerk user's ID, from `Authorization: Bearer <session token>` (#14)."""
+    verify: TokenVerifier | None = request.app.state.verify_token
+    if verify is None:
+        raise HTTPException(status_code=503, detail="Sign-in isn't set up on the server yet. Please try again later.")
+    scheme, _, token = (authorization or "").partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        raise HTTPException(status_code=401, detail=SIGN_IN_REQUIRED, headers={"WWW-Authenticate": "Bearer"})
+    try:
+        return verify(token.strip())
+    except InvalidToken as error:
+        logger.info("Rejected session token: %s", error)
+        raise HTTPException(status_code=401, detail=SIGN_IN_INVALID, headers={"WWW-Authenticate": "Bearer"}) from None
 
 
 UserId = Annotated[str, Depends(require_user)]
@@ -129,12 +138,12 @@ def create_app(
     hazards: Hazards | None = None,
     review_photo: PhotoReviewer | None = None,
     store: PostgresReportStore | MemoryReportStore | None = None,
-    demo_mode: bool | None = None,
+    verify_token: TokenVerifier | None = None,
 ) -> FastAPI:
     """`hazards` are fixed extra hazards (tests use them); confirmed reports are added on top.
 
     `store` defaults to Tiger Data if PGHOST is set, else memory (see app/storage.py).
-    `demo_mode` defaults to LUMI_DEMO_MODE=1; it adds the /demo endpoints (#38).
+    `verify_token` defaults to Clerk from CLERK_ISSUER / CLERK_JWKS_URL (see app/auth.py).
     """
     # The Mastra photo agent (LUMI_MASTRA_URL). If it's down, reports stay pending.
     reviewer = review_photo if review_photo is not None else make_mastra_reviewer()
@@ -187,8 +196,9 @@ def create_app(
         CORSMiddleware,
         allow_origins=frontend_origins(),
         allow_methods=["GET", "POST"],
-        allow_headers=["Content-Type", "X-User-Id"],
+        allow_headers=["Content-Type", "Authorization"],
     )
+    app.state.verify_token = verify_token
 
     @app.exception_handler(RequestValidationError)
     async def readable_validation_error(request: Request, error: RequestValidationError) -> JSONResponse:
