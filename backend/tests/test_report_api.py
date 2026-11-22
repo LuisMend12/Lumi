@@ -10,6 +10,7 @@ from app.config import MAX_PHOTO_BYTES
 from app.main import SIGN_IN_INVALID, SIGN_IN_REQUIRED, create_app
 from app.reports import PhotoVerdict
 from app.routing import RouteMode
+from tests.conftest import auth_header
 from tests.test_photo_review import assessment, mastra  # noqa: F401  (`mastra` is a fixture)
 
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64

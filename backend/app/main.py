@@ -16,7 +16,18 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.auth import InvalidToken, TokenVerifier, clerk_verifier_from_env
-from app.config import GRAPH_PATH, MAX_PHOTO_BYTES, MAX_SNAP_DISTANCE_M, NEARBY_RADIUS_M, frontend_origins
+from app.config import (
+    DEMO_MODE_ENV,
+    DEMO_PHOTO_USER,
+    DEMO_USER_PREFIX,
+    GRAPH_PATH,
+    MAX_DEMO_VOTERS,
+    MAX_PHOTO_BYTES,
+    MAX_SNAP_DISTANCE_M,
+    NEARBY_RADIUS_M,
+    VOTES_TO_FLIP,
+    frontend_origins,
+)
 from app.photo_review import detect_media_type, make_mastra_reviewer
 from app.reports import PhotoReviewer, PhotoVerdict, SegmentReports, SegmentStatus, new_report_id
 from app.routing import (
@@ -139,12 +150,20 @@ def create_app(
     review_photo: PhotoReviewer | None = None,
     store: PostgresReportStore | MemoryReportStore | None = None,
     verify_token: TokenVerifier | None = None,
+    demo_mode: bool | None = None,
 ) -> FastAPI:
     """`hazards` are fixed extra hazards (tests use them); confirmed reports are added on top.
 
     `store` defaults to Tiger Data if PGHOST is set, else memory (see app/storage.py).
     `verify_token` defaults to Clerk from CLERK_ISSUER / CLERK_JWKS_URL (see app/auth.py).
+    `demo_mode` defaults to LUMI_DEMO_MODE=1; it adds the /demo endpoints (#38).
     """
+    if verify_token is None:
+        verify_token = clerk_verifier_from_env(frontend_origins())
+    if verify_token is None:
+        logger.warning("CLERK_ISSUER / CLERK_JWKS_URL not set: reports and votes will answer 503.")
+    if demo_mode is None:
+        demo_mode = os.environ.get(DEMO_MODE_ENV) == "1"
     # The Mastra photo agent (LUMI_MASTRA_URL). If it's down, reports stay pending.
     reviewer = review_photo if review_photo is not None else make_mastra_reviewer()
     static_hazards = hazards if hazards is not None else {}
