@@ -19,9 +19,9 @@ Put these in `backend/.env`, which is gitignored. Never commit keys.
 
 | Variable | Needed for | Required now? |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | `scripts/try_vision.py` (Claude vision) | Only to run the photo spike |
+| `LUMI_MASTRA_URL` | Where the photo-review service runs (`app/photo_review.py`) | No. Default `http://localhost:4111` |
 
-The API server itself doesn't read any environment variables yet.
+The Gemini key isn't a backend variable: it goes in `mastra/.env` (see [mastra/README.md](../mastra/README.md)).
 
 ## Run
 
@@ -30,6 +30,19 @@ uv run uvicorn app.main:app --reload
 ```
 
 Interactive docs: http://127.0.0.1:8000/docs
+
+### Photo review service (Mastra)
+
+Photo review runs in a separate Mastra service on Gemini's free tier, in `mastra/` at the repo root. The backend calls its `POST /review` endpoint through `make_mastra_reviewer()` in `app/photo_review.py`. In a second terminal:
+
+```bash
+cd mastra
+npm install
+cp .env.example .env    # then set GOOGLE_GENERATIVE_AI_API_KEY in mastra/.env
+npm run dev             # http://localhost:4111
+```
+
+If the service is down or fails, photo reports stay pending and don't affect routing. The endpoint and error codes are in [mastra/README.md](../mastra/README.md). Gemini's free tier may use submitted photos to improve Google's products, so test with photos without identifiable people.
 
 ## API
 
@@ -85,7 +98,7 @@ app/
   main.py          FastAPI app factory (create_app) and endpoints
 scripts/
   build_graph.py   download the OSM walk network -> data/bu_walk.graphml
-  try_vision.py    throwaway spike: Claude vision assessment of sidewalk photos
+  try_photo_review.py  manual check: send a folder of photos through the Mastra reviewer
 data/
   bu_walk.graphml  street graph (5,574 intersections, 14,936 segments)
 tests/             pytest suite on a small synthetic graph
@@ -111,13 +124,15 @@ uv run python scripts/build_graph.py
 
 This downloads from OpenStreetMap and overwrites `data/bu_walk.graphml`.
 
-### Photo-analysis spike
+### Try photo review on real photos
+
+With the Mastra service running (see above):
 
 ```bash
-uv run --env-file .env python scripts/try_vision.py path/to/photos
+uv run python scripts/try_photo_review.py path/to/photos
 ```
 
-For each `.jpg`, `.png`, or `.webp` in the folder, this sends the photo to `claude-opus-5-5` and prints a structured assessment:
+For each `.jpg`, `.png`, or `.webp` in the folder, this sends the photo through the Mastra service to Gemini and prints the structured assessment and the verdict the backend would give:
 
 - `is_sidewalk_hazard`
 - `kind`
@@ -127,7 +142,7 @@ For each `.jpg`, `.png`, or `.webp` in the folder, this sends the photo to `clau
 - `accessibility_issue`
 - `description`
 
-Each photo is one paid API call. The script is for judging how reliable the model is. It isn't wired into the API.
+Each photo is one Gemini call, which counts against the free tier's rate limits. The script is for judging how reliable the model is.
 
 ## Known issues
 
