@@ -44,6 +44,10 @@ SCHEMA = [
     "SELECT create_hypertable('reports', 'reported_at', if_not_exists => TRUE)",
 ]
 
+# Lets a retried insert skip a row that already landed (#91). On a hypertable a
+# unique index must include the time column, so it's (report_id, reported_at).
+UNIQUE_INDEX = "CREATE UNIQUE INDEX IF NOT EXISTS reports_report_id_idx ON reports (report_id, reported_at)"
+
 
 def new_vote_id() -> str:
     return f"v_{uuid.uuid4().hex[:12]}"
@@ -72,6 +76,8 @@ class MemoryReportStore:
         self._rows: list[StoredReport] = []
 
     def add(self, row: StoredReport) -> None:
+        if any((r.report_id, r.reported_at) == (row.report_id, row.reported_at) for r in self._rows):
+            return  # same as Postgres: a repeated insert is ignored (#91)
         self._rows.append(row)
 
     def all(self) -> list[StoredReport]:
@@ -95,21 +101,30 @@ class PostgresReportStore:
         self._conn = psycopg.connect(conninfo, autocommit=True)
         for statement in SCHEMA:
             self._conn.execute(statement)
+        try:
+            self._conn.execute(UNIQUE_INDEX)
+        except psycopg.Error as error:
+            # Existing duplicate rows block the index. Keep running: inserts still
+            # work, they just can't skip duplicates until the old rows are cleaned up.
+            logger.warning("Couldn't create the unique report index (%s); duplicate rows aren't prevented", error)
 
     def add(self, row: StoredReport) -> None:
         try:
             self._insert(row)
         except psycopg.OperationalError:
             # The connection dropped since the last call: reconnect once and retry (#61).
+            # The first insert may have committed before the connection dropped;
+            # ON CONFLICT DO NOTHING in _insert keeps the retry from adding it twice (#91).
             logger.warning("Insert failed on a dropped connection; reconnecting once")
-            self._conn = psycopg.connect(self._conninfo, autocommit=True)
+            self._reconnect()
             self._insert(row)
 
     def _insert(self, row: StoredReport) -> None:
         self._connection().execute(
             "INSERT INTO reports"
             " (report_id, segment_id, user_id, lat, lon, blocked, status, photo, simulated, reported_at)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+            " ON CONFLICT DO NOTHING",
             (
                 row.report_id,
                 row.segment_id,
@@ -154,8 +169,16 @@ class PostgresReportStore:
         """The open connection, reconnecting once if the last one dropped."""
         if self._conn.closed or self._conn.broken:
             logger.warning("Database connection lost; reconnecting")
-            self._conn = psycopg.connect(self._conninfo, autocommit=True)
+            self._reconnect()
         return self._conn
+
+    def _reconnect(self) -> None:
+        """Close the dropped connection (ignoring errors) and open a new one."""
+        try:
+            self._conn.close()
+        except psycopg.Error:
+            pass
+        self._conn = psycopg.connect(self._conninfo, autocommit=True)
 
 
 def default_store() -> PostgresReportStore | MemoryReportStore:

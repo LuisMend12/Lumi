@@ -15,6 +15,9 @@ class FakeConnection:
         self.closed = False
         self.broken = False
 
+    def close(self) -> None:
+        self.closed = True
+
     def execute(self, sql, params=None):
         if sql.lstrip().upper().startswith("INSERT"):
             if self.fail_inserts:
