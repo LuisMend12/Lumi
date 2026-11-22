@@ -15,18 +15,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from app.config import (
-    DEMO_MODE_ENV,
-    DEMO_PHOTO_USER,
-    DEMO_USER_PREFIX,
-    GRAPH_PATH,
-    MAX_DEMO_VOTERS,
-    MAX_PHOTO_BYTES,
-    MAX_SNAP_DISTANCE_M,
-    NEARBY_RADIUS_M,
-    VOTES_TO_FLIP,
-    frontend_origins,
-)
+from app.config import GRAPH_PATH, MAX_PHOTO_BYTES, MAX_SNAP_DISTANCE_M, NEARBY_RADIUS_M, frontend_origins
+from app.photo_review import detect_media_type, make_mastra_reviewer
 from app.reports import PhotoReviewer, PhotoVerdict, SegmentReports, SegmentStatus, new_report_id
 from app.routing import (
     Hazards,
@@ -119,19 +109,6 @@ def load_street_graph() -> nx.DiGraph:
     return ox.convert.to_digraph(ox.load_graphml(GRAPH_PATH), weight="length")
 
 
-def unconfigured_reviewer() -> PhotoReviewer:
-    """Stand-in until the real photo agent is wired in: every photo stays pending."""
-    warned = False
-
-    def review(photo: bytes) -> PhotoVerdict:
-        nonlocal warned
-        if not warned:
-            logger.warning("No photo reviewer configured: photo reports stay pending and don't affect routing.")
-            warned = True
-        return PhotoVerdict.UNAVAILABLE
-
-    return review
-
 
 def require_user(x_user_id: Annotated[str | None, Header()] = None) -> str:
     """Temporary identity until login exists: any stable string the client sends."""
@@ -159,9 +136,8 @@ def create_app(
     `store` defaults to Tiger Data if PGHOST is set, else memory (see app/storage.py).
     `demo_mode` defaults to LUMI_DEMO_MODE=1; it adds the /demo endpoints (#38).
     """
-    if demo_mode is None:
-        demo_mode = os.environ.get(DEMO_MODE_ENV) == "1"
-    reviewer = review_photo if review_photo is not None else unconfigured_reviewer()
+    # The Mastra photo agent (LUMI_MASTRA_URL). If it's down, reports stay pending.
+    reviewer = review_photo if review_photo is not None else make_mastra_reviewer()
     static_hazards = hazards if hazards is not None else {}
     # Set at startup by `lifespan`; the endpoints below read them.
     street_graph: nx.DiGraph
@@ -266,7 +242,7 @@ def create_app(
         data = photo.file.read(MAX_PHOTO_BYTES + 1)
         if len(data) > MAX_PHOTO_BYTES:
             raise HTTPException(status_code=413, detail="The photo is larger than 5 MB. Send a smaller one.")
-        if image_type(data) is None:
+        if detect_media_type(data) is None:  # by content; filename and Content-Type are easy to get wrong
             raise HTTPException(status_code=415, detail="The photo must be a JPEG, PNG or WebP image.")
         sid, distance_m = segments.nearest(lat, lon)
         if distance_m > MAX_SNAP_DISTANCE_M:
@@ -436,20 +412,6 @@ def validation_message(errors: Sequence[dict]) -> str:
         message = error.get("msg", "Invalid value")
         parts.append(f"{field}: {message}" if field else message)
     return "; ".join(parts) or "Invalid request."
-
-
-def image_type(data: bytes) -> str | None:
-    """Media type from the file's first bytes, or None if it isn't JPEG, PNG or WebP.
-
-    The client's filename and Content-Type are ignored: they're easy to get wrong.
-    """
-    if data.startswith(b"\xff\xd8\xff"):
-        return "image/jpeg"
-    if data.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "image/png"
-    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-        return "image/webp"
-    return None
 
 
 def _review(review_photo: PhotoReviewer, photo: bytes) -> PhotoVerdict:

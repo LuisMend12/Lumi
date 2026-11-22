@@ -28,7 +28,7 @@ const RouteMap = dynamic(() => import("@/components/RouteMap"), {
 type Outcomes = Partial<Record<RouteMode, RouteOutcome>>;
 
 export default function Home() {
-  const { isSignedIn, userId } = useAuth();
+  const { isSignedIn, getToken } = useAuth();
   const { openSignIn } = useClerk();
   const [start, setStart] = useState<LatLon | null>(null);
   const [end, setEnd] = useState<LatLon | null>(null);
@@ -101,14 +101,20 @@ export default function Home() {
 
   async function handleVote(blocked: boolean) {
     if (!nearby) return;
-    if (!isSignedIn || !userId) {
+    if (!isSignedIn) {
       openSignIn(); // browsing is open; answering needs a real account (4 different people)
       return;
     }
     const segmentId = nearby.segment_id;
     setIsVoting(true);
     try {
-      const result = await voteOnSegment(userId, segmentId, blocked, await getLocation());
+      const location = await getLocation();
+      const token = await getToken();
+      if (!token) {
+        openSignIn();
+        return;
+      }
+      const result = await voteOnSegment(token, segmentId, blocked, location);
       if (!result.ok) {
         setVoteMessages((messages) => ({ ...messages, [segmentId]: result.message }));
       } else if (result.data.outcome === "photo_required") {
@@ -217,9 +223,9 @@ export default function Home() {
             onDismiss={() => setDismissedSegment(promptSegment.segment_id)}
           />
         )}
-        {isSheetOpen && userId ? (
+        {isSheetOpen && isSignedIn ? (
           <ReportSheet
-            userId={userId}
+            getToken={getToken}
             notice={sheetNotice}
             onClose={() => setIsSheetOpen(false)}
             onReported={refreshAfterChange}
