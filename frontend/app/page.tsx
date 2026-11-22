@@ -1,6 +1,6 @@
 "use client";
 
-import { SignInButton, SignedIn, SignedOut, UserButton, useAuth, useClerk } from "@clerk/nextjs";
+import { Show, SignInButton, UserButton, useAuth, useClerk } from "@clerk/nextjs";
 import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
 import DemoPanel from "@/components/DemoPanel";
@@ -332,7 +332,7 @@ export default function Home() {
             <h1 className="text-3xl font-semibold tracking-tight text-[var(--navy)]">Lumi</h1>
             <p className="text-sm text-[var(--muted)]">Winter walking routes around BU, shaped by what people report.</p>
           </div>
-          <SignedOut>
+          <Show when="signed-out">
             <SignInButton mode="modal">
               <button
                 type="button"
@@ -341,10 +341,10 @@ export default function Home() {
                 Sign in
               </button>
             </SignInButton>
-          </SignedOut>
-          <SignedIn>
+          </Show>
+          <Show when="signed-in">
             <UserButton />
-          </SignedIn>
+          </Show>
         </header>
 
         {USE_MOCKS && (
