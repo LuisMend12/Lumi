@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import MAX_PHOTO_BYTES
-from app.main import create_app
+from app.main import SIGN_IN_INVALID, SIGN_IN_REQUIRED, create_app
 from app.reports import PhotoVerdict
 from app.routing import RouteMode
 from tests.test_photo_review import assessment, mastra  # noqa: F401  (`mastra` is a fixture)
@@ -50,7 +50,7 @@ def report(client, user="alice", where=NEAR["A-B"], photo=JPEG, filename="photo.
         "/reports",
         data={"lat": str(lat), "lon": str(lon)},
         files={"photo": (filename, photo, "application/octet-stream")},
-        headers={"X-User-Id": user} if user else {},
+        headers=auth_header(user) if user else {},
     )
 
 
@@ -59,7 +59,7 @@ def vote(client, segment_id, user, blocked, where=None):
     return client.post(
         f"/segments/{segment_id}/votes",
         json={"blocked": blocked, "lat": lat, "lon": lon},
-        headers={"X-User-Id": user} if user else {},
+        headers=auth_header(user) if user else {},
     )
 
 
@@ -178,17 +178,47 @@ def test_report_outside_the_coverage_area_is_422(confirming):
     assert "outside" in response.json()["detail"]
 
 
-def test_report_without_user_id_is_401(confirming):
+def test_report_without_sign_in_is_401(confirming):
     response = report(confirming, user=None)
 
     assert response.status_code == 401
-    assert "X-User-Id" in response.json()["detail"]
+    assert response.json()["detail"] == SIGN_IN_REQUIRED
+    assert response.headers["www-authenticate"] == "Bearer"
 
 
-def test_blank_user_id_is_401(confirming):
-    response = report(confirming, user="   ")
+def test_report_with_an_invalid_token_is_401(confirming):
+    response = confirming.post(
+        "/reports",
+        data={"lat": str(NEAR["A-B"][0]), "lon": str(NEAR["A-B"][1])},
+        files={"photo": ("photo.jpg", JPEG, "image/jpeg")},
+        headers={"Authorization": "Bearer forged-token"},
+    )
 
     assert response.status_code == 401
+    assert response.json()["detail"] == SIGN_IN_INVALID
+
+
+def test_old_x_user_id_header_is_no_longer_accepted(confirming):
+    response = confirming.post(
+        "/segments/A-B/votes", json={"blocked": True, "lat": NEAR["A-B"][0], "lon": NEAR["A-B"][1]},
+        headers={"X-User-Id": "alice"},
+    )
+
+    assert response.status_code == 401
+
+
+def test_writes_are_503_when_sign_in_is_not_configured(street_graph, monkeypatch):
+    monkeypatch.setattr("app.main.clerk_verifier_from_env", lambda origins: None)
+
+    with make_client(street_graph, review_photo=reviewer(PhotoVerdict.CONFIRMED)) as client:
+        response = report(client)
+
+    assert response.status_code == 503
+
+
+def test_reads_work_without_sign_in(confirming):
+    assert confirming.get("/reports").status_code == 200
+    assert confirming.get("/route", params={**A_TO_D, "mode": "safer"}).status_code == 200
 
 
 # --- POST /segments/{segment_id}/votes --------------------------------------------
@@ -242,7 +272,7 @@ def test_vote_without_user_id_is_401(confirming):
 
 
 def test_vote_with_missing_fields_is_422(confirming):
-    response = confirming.post("/segments/A-B/votes", json={"blocked": True}, headers={"X-User-Id": "u1"})
+    response = confirming.post("/segments/A-B/votes", json={"blocked": True}, headers=auth_header("u1"))
 
     assert response.status_code == 422
 
@@ -379,20 +409,20 @@ def test_static_hazards_and_reported_blocks_are_merged(street_graph):
 # --- CORS ------------------------------------------------------------------
 
 
-def test_cors_preflight_allows_post_with_user_id_header(confirming):
+def test_cors_preflight_allows_post_with_authorization_header(confirming):
     response = confirming.options(
         "/reports",
         headers={
             "Origin": "http://localhost:3000",
             "Access-Control-Request-Method": "POST",
-            "Access-Control-Request-Headers": "x-user-id",
+            "Access-Control-Request-Headers": "authorization",
         },
     )
 
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
     assert "POST" in response.headers["access-control-allow-methods"]
-    assert "x-user-id" in response.headers["access-control-allow-headers"].lower()
+    assert "authorization" in response.headers["access-control-allow-headers"].lower()
 
 
 def test_cors_origins_come_from_the_environment(street_graph, monkeypatch):
