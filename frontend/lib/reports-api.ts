@@ -38,6 +38,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 const OFFLINE_MESSAGE = "Can't reach the Lumi server. Check your connection and try again.";
 
 const STATUS_MESSAGES: Record<number, string> = {
+  401: "Please sign in again, then try once more.",
   403: "You need to be within 50 m of this sidewalk to answer.",
   404: "That sidewalk no longer exists on the map.",
   413: "The photo is too large. Try another photo.",
@@ -45,20 +46,20 @@ const STATUS_MESSAGES: Record<number, string> = {
   422: "That spot is outside Lumi's coverage area.",
 };
 
-// Writes need the signed-in Clerk user's ID (#14). For now it goes in the
-// X-User-Id header the backend reads today. Once the backend verifies Clerk
-// tokens, send `Authorization: Bearer <getToken()>` here instead.
-export async function submitReport(userId: string, location: LatLon, photo: Blob): Promise<ApiResult<ReportResult>> {
+// Writes need sign-in (#14): a fresh Clerk session token from getToken(),
+// sent as `Authorization: Bearer <token>`. The backend verifies it with Clerk's
+// public keys and uses the token's user ID.
+export async function submitReport(token: string, location: LatLon, photo: Blob): Promise<ApiResult<ReportResult>> {
   if (USE_MOCKS) return (await import("./mocks")).mockSubmitReport(location);
   const form = new FormData();
   form.append("lat", String(location[0]));
   form.append("lon", String(location[1]));
   form.append("photo", photo, "report.jpg");
-  return request<ReportResult>("/reports", { method: "POST", body: form, headers: { "X-User-Id": userId } });
+  return request<ReportResult>("/reports", { method: "POST", body: form, headers: bearer(token) });
 }
 
 export async function voteOnSegment(
-  userId: string,
+  token: string,
   segmentId: string,
   blocked: boolean,
   location: LatLon,
@@ -66,7 +67,7 @@ export async function voteOnSegment(
   if (USE_MOCKS) return (await import("./mocks")).mockVote();
   return request<VoteResult>(`/segments/${encodeURIComponent(segmentId)}/votes`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-User-Id": userId },
+    headers: { "Content-Type": "application/json", ...bearer(token) },
     body: JSON.stringify({ blocked, lat: location[0], lon: location[1] }),
   });
 }
@@ -79,6 +80,10 @@ export async function fetchNearby(location: LatLon): Promise<ApiResult<NearbySeg
 export async function fetchReports(): Promise<ApiResult<Report[]>> {
   if (USE_MOCKS) return (await import("./mocks")).mockReports();
   return request<Report[]>("/reports", {});
+}
+
+function bearer(token: string): Record<string, string> {
+  return { Authorization: `Bearer ${token}` };
 }
 
 async function request<T>(path: string, init: RequestInit): Promise<ApiResult<T>> {
