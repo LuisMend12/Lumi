@@ -34,9 +34,14 @@ npm run dev   # http://localhost:3000
 ```
 app/page.tsx             page state: clicked points, fetched routes, selected mode, mode cards
 app/globals.css          winter palette (CSS variables)
-components/RouteMap.tsx  Leaflet map, coverage circle, route lines (browser-only, loaded with ssr: false)
+components/RouteMap.tsx  Leaflet map, coverage circle, route lines, reports, nearby highlight (browser-only, loaded with ssr: false)
+components/ReportSheet.tsx   photo report: take/choose photo, preview, submit, outcome message
+components/NearbyPrompt.tsx  one-tap "Still blocked / It's clear" card for a nearby reported sidewalk
 lib/api.ts               typed calls to GET /route, readable error messages
-lib/mocks.ts             contract-shaped sample routes and hazards (NEXT_PUBLIC_USE_MOCKS)
+lib/reports-api.ts       report, vote, nearby, and reports endpoints; temporary X-User-Id
+lib/reporting.ts         plain-language wording for every report and vote outcome
+lib/device.ts            location (read only while the app is open) and in-browser photo shrinking
+lib/mocks.ts             contract-shaped sample data (NEXT_PUBLIC_USE_MOCKS); report and vote calls cycle through every outcome
 lib/modes.ts             coverage area, per-mode styles, verification labels, walking time
 ```
 

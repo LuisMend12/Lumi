@@ -4,15 +4,37 @@ import "leaflet/dist/leaflet.css";
 import { Circle, CircleMarker, MapContainer, Polyline, TileLayer, Tooltip, useMapEvents } from "react-leaflet";
 import type { Hazard, LatLon, RouteMode, RouteOutcome } from "@/lib/api";
 import { AREA_CENTER, AREA_RADIUS_M, MODE_STYLES, NAVY, VERIFICATION_STYLES, hazardLabel } from "@/lib/modes";
+import type { NearbySegment, Report } from "@/lib/reports-api";
 
 type Props = {
   start: LatLon | null;
   end: LatLon | null;
   outcomes: Partial<Record<RouteMode, RouteOutcome>>;
   selectedMode: RouteMode;
+  reports: Report[];
+  nearbySegment: NearbySegment | null;
   onMapClick: (point: LatLon) => void;
   onSelectRoute: (mode: RouteMode) => void;
 };
+
+const NEARBY_HIGHLIGHT = "#f59e0b";
+
+function ReportMarker({ report }: { report: Report }) {
+  const style = VERIFICATION_STYLES[report.verification];
+  const label = `Report · ${style.label}`;
+  return (
+    <CircleMarker
+      center={report.location}
+      radius={6}
+      pathOptions={{ color: NAVY, weight: 2, fillColor: style.fill, fillOpacity: style.fillOpacity, dashArray: "2 3" }}
+    >
+      {/* Simulated reports keep their badge on screen; real ones show the label on hover or tap. */}
+      <Tooltip direction="right" offset={[8, 0]} permanent={report.simulated}>
+        {report.simulated ? `Simulated · ${label}` : label}
+      </Tooltip>
+    </CircleMarker>
+  );
+}
 
 function ClickHandler({ onMapClick }: { onMapClick: (point: LatLon) => void }) {
   useMapEvents({ click: (event) => onMapClick([event.latlng.lat, event.latlng.lng]) });
@@ -42,7 +64,16 @@ function HazardMarker({ hazard }: { hazard: Hazard }) {
   );
 }
 
-export default function RouteMap({ start, end, outcomes, selectedMode, onMapClick, onSelectRoute }: Props) {
+export default function RouteMap({
+  start,
+  end,
+  outcomes,
+  selectedMode,
+  reports,
+  nearbySegment,
+  onMapClick,
+  onSelectRoute,
+}: Props) {
   // Draw the selected route last so it sits on top where routes overlap.
   const drawOrder = (Object.keys(outcomes) as RouteMode[]).sort(
     (a, b) => Number(a === selectedMode) - Number(b === selectedMode),
@@ -63,6 +94,16 @@ export default function RouteMap({ start, end, outcomes, selectedMode, onMapClic
         interactive={false}
       />
       <ClickHandler onMapClick={onMapClick} />
+      {reports.map((report) => (
+        <ReportMarker key={report.report_id} report={report} />
+      ))}
+      {nearbySegment && (
+        <Polyline
+          positions={nearbySegment.coordinates}
+          pathOptions={{ color: NEARBY_HIGHLIGHT, weight: 10, opacity: 0.85, lineCap: "round" }}
+          interactive={false}
+        />
+      )}
       {drawOrder.map((mode) => {
         const outcome = outcomes[mode];
         if (outcome?.status !== "ok") return null;
