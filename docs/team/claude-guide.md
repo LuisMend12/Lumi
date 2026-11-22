@@ -74,7 +74,7 @@ gh pr create --title "<what the PR does>" --body-file <filled PR template>
 - start work that an issue marks as "Decision needed" (for example login, #14);
 - add a dependency, a new service, or anything that needs a new secret;
 - delete or rewrite anything in git history, or touch the other lane's folder;
-- run something that costs money (Claude API calls on many photos, paid hosting).
+- run something that costs money (Gemini API calls on many photos, paid hosting).
 
 ## Useful questions to ask your human
 
