@@ -64,7 +64,8 @@ Until hazards are reported, all three modes show the same route.
 
 Never commit keys. `.env` files and any file ending in `.env` are gitignored.
 
-- **Backend:** API keys (for example `ANTHROPIC_API_KEY`) go in `backend/.env`. See [backend/README.md](backend/README.md).
+- **Backend:** database settings (`PG*`) and `LUMI_MASTRA_URL` go in `backend/.env`. Copy [backend/.env.example](backend/.env.example) and see [backend/README.md](backend/README.md).
+- **Photo agent:** the Gemini key goes in `mastra/.env`. See [mastra/README.md](mastra/README.md).
 - **Frontend:** the backend URL can be changed with `NEXT_PUBLIC_API_URL` in `frontend/.env.local`. The default is `http://127.0.0.1:8000`.
 
 ## What works today
