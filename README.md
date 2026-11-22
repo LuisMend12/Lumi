@@ -4,7 +4,19 @@
 
 Winter walking navigation for Boston. Lumi recommends walking routes that account for reported snow, ice, and blocked sidewalks, not just distance. Built for HackBoston.
 
-> **Status:** early. You can open a map of the 1.5 km area around Boston University, click a start and a destination, and compare the three route modes. Report rules exist in the backend, but there are no report endpoints, storage, or login yet. Plan and open questions: [docs/plans/2026-11-21-lumi-plan.md](docs/plans/2026-11-21-lumi-plan.md).
+> **Start here:** The [teammate handoff](docs/team/handoff.md) covers local setup, the simulated block-and-reopen flow, and what to verify on a phone. The app has report and vote endpoints, Clerk sign-in, and optional Tiger Data persistence.
+
+## App screenshots
+
+Captured from the Storm Center preview (PR #75), running locally with the BU street network. Both screenshots show Warren Towers to Packard's Corner.
+
+**Route comparison before a report.** All three modes take the same 1,631 m path on this example.
+
+![Lumi desktop map with Shortest, Safer, and Accessible route cards](docs/screenshots/route-comparison.png)
+
+**Detour after a simulated sidewalk block.** The route grows to 1,715 m, and the map and report strip label the blockage as simulated.
+
+![Lumi map showing a detour around a simulated blocked sidewalk](docs/screenshots/simulated-detour.png)
 
 ## Run the app
 
@@ -13,7 +25,7 @@ You need two terminals: one for the backend API, one for the map website. Both k
 ### Prerequisites (one-time)
 
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) for the Python backend. It installs Python 3.12 automatically.
-- [Node.js](https://nodejs.org/) 20 or newer, which includes `npm`.
+- [Node.js](https://nodejs.org/) 22.18 or newer for the frontend and Mastra. Set up the frontend Clerk keys as described in the [handoff](docs/team/handoff.md).
 
 Install the dependencies once after cloning:
 
@@ -48,7 +60,7 @@ The website is ready when it prints `Local: http://localhost:3000`.
 2. Click the map once to set your start, then again to set your destination. Stay inside the dashed circle.
 3. The Shortest, Safer, and Accessible routes are drawn in different colors. Click a card or a line to see what that mode means.
 
-Until hazards are reported, all three modes show the same route.
+Accessible avoids mapped stairs and may take a different route even before anyone reports a hazard.
 
 ### Troubleshooting
 
@@ -78,7 +90,7 @@ Never commit keys. `.env` files and any file ending in `.env` are gitignored.
 
 - A map website (`frontend/`) that draws all three routes between two clicked points.
 
-Hazard reports are not stored yet: the hazard list is empty while the server runs, so all three modes currently return the same route.
+Reports use in-memory storage by default. Configure Tiger Data to keep reports across backend restarts.
 
 ## API example
 
@@ -130,7 +142,7 @@ This downloads from OpenStreetMap and overwrites `backend/data/bu_walk.graphml`.
 
 ```
 startup:  data/bu_walk.graphml ──load──> street graph in memory (never modified)
-                                         hazards dict (empty for now; reports will fill it)
+                                         hazards from confirmed reports
 
 /route:   snap start/end to nearest intersection
           ──> Dijkstra with a weight function that combines graph + hazards ──> route
@@ -150,8 +162,8 @@ Keeping all routing logic in that one function means adding modes or making old 
 backend/                 Python + FastAPI (details: backend/README.md)
   app/config.py          coverage area, file paths, tuning constants
   app/routing.py         modes, hazards, weight function, route search, point snapping
-  app/reports.py         report rules (photo review, votes, 4-user flip); no endpoints yet
-  app/main.py            FastAPI app: /health, /route
+  app/reports.py         report rules (photo review, votes, 4-user flip)
+  app/main.py            FastAPI app: routing, reporting, voting, and demo endpoints
   scripts/build_graph.py downloads the street graph
   data/bu_walk.graphml   the street graph (committed so nobody has to re-download)
   tests/                 routing, report, and API tests
@@ -171,19 +183,17 @@ docs/plans/              plan and open decisions for review
 | Routing state | Street graph unchanged; hazards combined when each route is computed |
 | Blocked segments | Skipped in every mode |
 | Mode explanations | Shown to the user with every route |
-| Hazard report storage | TigerData (managed PostgreSQL), not wired up yet |
+| Hazard report storage | Tiger Data (managed PostgreSQL), with an in-memory fallback |
 
-## Next up
+## Team docs
 
-1. **Report endpoints:** photo report, one-tap "blocked / unblocked" vote, the nearby check, and wiring in the photo agent.
-2. **Demo bots:** simulated, clearly labeled users that report so the live demo shows routes changing.
-3. **Storage and login:** TigerData, plus a login provider.
-
-Later: Mastra as the photo-review agent, Gemini image generation for branding, a GoDaddy domain plus hosting, and weather-based predictions.
+- [Teammate handoff](docs/team/handoff.md)
+- [Open GitHub PRs and issues in plain language](docs/team/github-queue.md)
+- [API contract](docs/team/api-contract.md)
+- [Deployment checklist](docs/team/deploy.md)
 
 ## Known limitations
 
-- Hazard reports aren't implemented, so routes currently ignore real conditions.
-- Accessible mode has no curb ramp or slope data yet; it treats hazards the same way Safer does.
+- Accessible mode has no curb ramp or slope data yet; it avoids mapped stairs and weighs hazards the same way Safer does.
 - Points snap to the nearest intersection, not the nearest point along a sidewalk. The short stretch to that intersection isn't drawn.
 - Never present a route as "safe": reports can be missing or out of date.
