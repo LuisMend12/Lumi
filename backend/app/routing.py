@@ -187,3 +187,33 @@ def nearest_node(graph: nx.DiGraph, lat: float, lon: float) -> tuple[Hashable, f
     distances = 2 * EARTH_RADIUS_M * np.arcsin(np.sqrt(a))
     index = int(np.argmin(distances))
     return node_ids[index], float(distances[index])
+
+
+def step_free_components(graph: nx.DiGraph) -> dict[Hashable, int]:
+    """Which group of intersections connected without stairs each node is in (#33).
+
+    Two nodes share a group id exactly when a step-free path joins them. Group 0
+    is the largest: the step-free network most of the map belongs to.
+    """
+    walkable = nx.Graph()
+    walkable.add_nodes_from(graph.nodes)
+    walkable.add_edges_from((u, v) for u, v, edge in graph.edges(data=True) if not _is_stairs(edge))
+    groups = sorted(nx.connected_components(walkable), key=len, reverse=True)
+    return {node: group_id for group_id, group in enumerate(groups) for node in group}
+
+
+def step_free_network(graph: nx.DiGraph) -> set[Hashable]:
+    """The largest group of intersections connected without stairs (#33).
+
+    A spot that only connects to it by stairs, like a plaza at the top of a
+    staircase, is outside it even if it has a few step-free neighbors.
+    """
+    return {node for node, group_id in step_free_components(graph).items() if group_id == 0}
+
+
+def nearest_step_free(graph: nx.DiGraph, node: Hashable, network: set[Hashable]) -> tuple[Hashable, float]:
+    """`node` itself if it's in the step-free network, else the closest node that is, and the distance in meters."""
+    if node in network:
+        return node, 0.0
+    lat, lon = _lat_lon(graph, node)
+    return nearest_node(graph.subgraph(network), lat, lon)

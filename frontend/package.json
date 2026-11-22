@@ -6,10 +6,11 @@
     "dev": "next dev --turbopack",
     "build": "next build --turbopack",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "vitest run"
   },
   "dependencies": {
-    "@clerk/nextjs": "6.39.9",
+    "@clerk/nextjs": "7.10.7",
     "leaflet": "^1.9.4",
     "next": "15.5.28",
     "react": "19.1.10",
@@ -26,6 +27,7 @@
     "eslint": "^9",
     "eslint-config-next": "15.5.28",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "4.1.12"
   }
 }

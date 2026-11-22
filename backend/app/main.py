@@ -23,8 +23,13 @@ from app.config import (
     GRAPH_PATH,
     MAX_DEMO_VOTERS,
     MAX_PHOTO_BYTES,
+    MAX_PENDING_REVIEW_RETRIES,
+    MAX_PHOTO_REPORTS_IN_WINDOW,
     MAX_SNAP_DISTANCE_M,
+    MAX_STEP_FREE_SNAP_M,
     NEARBY_RADIUS_M,
+    PENDING_RETRY_INTERVAL_S,
+    PHOTO_REPORT_WINDOW,
     VOTES_TO_FLIP,
     frontend_origins,
 )
@@ -38,10 +43,13 @@ from app.routing import (
     SegmentKey,
     find_route,
     nearest_node,
+    nearest_step_free,
     segment_key,
+    step_free_components,
 )
 from app.routing import segment_id as make_segment_id
 from app.segments import SegmentIndex
+from app.upload_limit import FORM_OVERHEAD_BYTES, UploadSizeLimit
 from app.storage import MemoryReportStore, PostgresReportStore, StoredReport, default_store, new_vote_id, replay
 
 logger = logging.getLogger(__name__)
@@ -58,6 +66,7 @@ class RouteOut(BaseModel):
     snapped_start: tuple[float, float]  # (lat, lon) of the intersection the route starts at
     snapped_end: tuple[float, float]  # (lat, lon) of the intersection the route ends at
     hazards: list[RouteHazard]  # only confirmed reports reach routing; GET /reports lists the rest
+    notice: str | None = None  # e.g. Accessible moved a stairs-only start to a step-free point
 
 
 class ReportOut(BaseModel):
@@ -170,6 +179,8 @@ def create_app(
     # Set at startup by `lifespan`; the endpoints below read them.
     street_graph: nx.DiGraph
     segments: SegmentIndex
+    step_free_group: dict  # node -> id of its stairs-free group; 0 = the main step-free network (#33)
+    step_free: set  # the main step-free network: every node in group 0
     reports: SegmentReports
     report_store: PostgresReportStore | MemoryReportStore  # every write goes here first, then to `reports`
     simulated_ids: set[str] = set()  # photo reports created by /demo endpoints, shown as "Simulated"
@@ -177,6 +188,18 @@ def create_app(
     # thread pool, so every read and write of `reports` holds this lock. Writes
     # also hold it while saving to the store, so stored order = applied order.
     lock = threading.Lock()
+    photo_reviews: dict[str, list[datetime]] = {}  # user -> when their photos went to the reviewer (#82)
+
+    def reserve_photo_review(user_id: str) -> bool:
+        """Count one review for this user, or return False if they're over the limit."""
+        now = datetime.now(UTC)
+        with lock:
+            recent = [t for t in photo_reviews.get(user_id, []) if now - t < PHOTO_REPORT_WINDOW]
+            if len(recent) >= MAX_PHOTO_REPORTS_IN_WINDOW:
+                photo_reviews[user_id] = recent
+                return False
+            photo_reviews[user_id] = [*recent, now]
+            return True
 
     def rebuild_from_store() -> int:
         """Replace in-memory status with a replay of the stored rows (startup and demo reset)."""
@@ -188,17 +211,67 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        nonlocal street_graph, segments, report_store
+        nonlocal street_graph, segments, step_free_group, step_free, report_store
         street_graph = graph if graph is not None else load_street_graph()
         segments = SegmentIndex(street_graph)
+        step_free_group = step_free_components(street_graph)
+        step_free = {node for node, group_id in step_free_group.items() if group_id == 0}
         report_store = store if store is not None else default_store()
         replayed = rebuild_from_store()
         logger.info("Rebuilt segment status from %d stored reports", replayed)
+        stop_retrying = threading.Event()
+        retrier = threading.Thread(target=retry_until_stopped, args=(stop_retrying,), daemon=True)
+        retrier.start()
         try:
             yield
         finally:
+            stop_retrying.set()
+            retrier.join()  # it stops between photos, so at most one reviewer call (20 s) to finish
             if store is None:  # we opened it, so we close it
                 report_store.close()
+
+    retries: dict[str, int] = {}  # report id -> reviewer calls made by retries this run
+
+    def retry_pending_photos(stop: threading.Event | None = None) -> int:
+        """Re-send pending photos to the agent and apply any verdict (#53). Returns how many resolved.
+
+        The agent is called outside the lock, like in POST /reports, so a slow
+        agent never blocks routing. Each verdict is saved before it's applied.
+        Each photo is retried at most MAX_PENDING_REVIEW_RETRIES times per run (each
+        is a paid call), and `stop` is checked between photos so shutdown never waits
+        on a long backlog.
+        """
+        with lock:
+            waiting = reports.pending_photos()
+        resolved = 0
+        for photo_report in waiting:
+            if stop is not None and stop.is_set():
+                break
+            attempts = retries.get(photo_report.report_id, 0)
+            if attempts >= MAX_PENDING_REVIEW_RETRIES:
+                continue
+            retries[photo_report.report_id] = attempts + 1
+            verdict = _review(reviewer, photo_report.photo)
+            if verdict is PhotoVerdict.UNAVAILABLE:
+                continue
+            with lock:
+                try:
+                    report_store.update_status(photo_report.report_id, verdict, datetime.now(UTC))
+                except Exception:
+                    logger.exception("Couldn't save the new verdict for %s; will retry", photo_report.report_id)
+                    continue
+                if reports.resolve_pending(photo_report.report_id, verdict) is not None:
+                    resolved += 1
+        if resolved:
+            logger.info("Resolved %d pending photo reports", resolved)
+        return resolved
+
+    def retry_until_stopped(stop: threading.Event) -> None:
+        while not stop.wait(PENDING_RETRY_INTERVAL_S):
+            try:
+                retry_pending_photos(stop)
+            except Exception:  # keep retrying on the next tick
+                logger.exception("Pending photo retry failed")
 
     def save(row: StoredReport) -> None:
         """Store first: if saving fails, the report isn't applied and the user can retry."""
@@ -211,6 +284,13 @@ def create_app(
             ) from error
 
     app = FastAPI(title="Lumi API", lifespan=lifespan)
+    # Added before CORS so CORS stays outermost and the 413/411 replies still carry CORS headers.
+    app.add_middleware(
+        UploadSizeLimit,
+        paths={"/reports"},
+        max_body_bytes=MAX_PHOTO_BYTES + FORM_OVERHEAD_BYTES,
+        limit_label="5 MB",
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=frontend_origins(),
@@ -218,6 +298,7 @@ def create_app(
         allow_headers=["Content-Type", "Authorization"],
     )
     app.state.verify_token = verify_token
+    app.state.retry_pending_photos = retry_pending_photos  # tests and ops can trigger a retry
 
     @app.exception_handler(RequestValidationError)
     async def readable_validation_error(request: Request, error: RequestValidationError) -> JSONResponse:
@@ -238,6 +319,13 @@ def create_app(
     ) -> RouteOut:
         start = _snap(street_graph, start_lat, start_lon, "Start")
         end = _snap(street_graph, end_lat, end_lon, "Destination")
+        notices = []
+        # Snap only when no step-free path joins the two ends: two spots on the same
+        # stairs-only plaza can still route between themselves without stairs.
+        if mode is RouteMode.ACCESSIBLE and step_free_group[start] != step_free_group[end]:
+            start, start_notice = _step_free(street_graph, start, step_free, "start", "starts")
+            end, end_notice = _step_free(street_graph, end, step_free, "destination", "ends")
+            notices = [n for n in (start_notice, end_notice) if n]
         if start == end:
             raise HTTPException(
                 status_code=422,
@@ -257,6 +345,7 @@ def create_app(
             snapped_start=_lat_lon(street_graph, start),
             snapped_end=_lat_lon(street_graph, end),
             hazards=result.hazards,
+            notice=" ".join(notices) or None,
         )
 
     # Sync (not async) so FastAPI runs it in a worker thread: the photo
@@ -280,6 +369,11 @@ def create_app(
                 detail=f"This spot is outside Lumi's coverage area ({distance_m:.0f} m from the nearest mapped sidewalk).",
             )
 
+        if not reserve_photo_review(user_id):
+            raise HTTPException(
+                status_code=429,
+                detail=f"You've sent {MAX_PHOTO_REPORTS_IN_WINDOW} photo reports in the last hour. Try again later.",
+            )
         verdict = _review(reviewer, data)  # outside the lock: it may be slow
         report_id = new_report_id()
         segment = _key(segments, sid)
@@ -309,7 +403,7 @@ def create_app(
         segment = _key(segments, segment_id)
         with lock:
             now = datetime.now(UTC)
-            if body.blocked and reports.needs_photo(user_id, now):
+            if reports.vote_needs_photo(segment, user_id, body.blocked, now):
                 # Refused, so nothing to store: replay would refuse it again anyway.
                 return VoteOut(outcome="photo_required", segment_status=reports.status(segment))
             save(StoredReport(new_vote_id(), segment_id, user_id, body.lat, body.lon, body.blocked, now))
@@ -406,17 +500,19 @@ def create_app(
         segment = demo_segment(segment_id)
         lat, lon = segments.midpoint(segment_id)
         outcome = None
+        votes_cast = 0  # simulated voters refused as photo_required cast nothing
         with lock:
             for n in range(1, body.voters + 1):
                 user = f"{DEMO_USER_PREFIX}{n}"
                 now = datetime.now(UTC)
-                if body.blocked and reports.needs_photo(user, now):
+                if reports.vote_needs_photo(segment, user, body.blocked, now):
                     outcome = "photo_required"
                     continue
                 save(StoredReport(new_vote_id(), segment_id, user, lat, lon, body.blocked, now, simulated=True))
                 outcome = reports.vote(segment, user, body.blocked, now).value
+                votes_cast += 1
             status = reports.status(segment)
-        return DemoVotesOut(votes_cast=body.voters, outcome=outcome, segment_status=status)
+        return DemoVotesOut(votes_cast=votes_cast, outcome=outcome, segment_status=status)
 
     @app.post("/demo/reset", response_model=DemoResetOut)
     def demo_reset() -> DemoResetOut:
@@ -469,6 +565,23 @@ def _merge_hazards(static: Hazards, reported: Hazards) -> Hazards:
 
 def _iso_utc(moment: datetime) -> str:
     return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _step_free(graph: nx.DiGraph, node, network: set, label: str, verb: str) -> tuple:
+    """Accessible only: move a stairs-only `node` to the step-free network, up to MAX_STEP_FREE_SNAP_M."""
+    step_free_node, distance_m = nearest_step_free(graph, node, network)
+    if step_free_node == node:
+        return node, None
+    if distance_m > MAX_STEP_FREE_SNAP_M:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"No step-free route found: your {label} is only reachable by stairs, "
+                f"and the nearest step-free point is {distance_m:.0f} m away."
+            ),
+        )
+    notice = f"Your {label} is only reachable by stairs, so the step-free route {verb} {distance_m:.0f} m away."
+    return step_free_node, notice
 
 
 def _snap(graph: nx.DiGraph, lat: float, lon: float, label: str):

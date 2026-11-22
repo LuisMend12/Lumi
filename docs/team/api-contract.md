@@ -39,6 +39,7 @@ The response stays as today, with these additions:
 - **New** `snapped_start` / `snapped_end`: the intersections the route actually starts and ends at. The frontend draws a dashed line from the point the user tapped to each of these.
 - **New** in each hazard: `location`, the segment midpoint, where the warning goes on the map. A route hazard is just `location`, `kind`, `severity` and `blocked`. It has no `segment_id` (votes use the ids from `GET /segments/nearby`) and no `verification`: only confirmed reports reach routing, so every route hazard counts as confirmed. Unverified and pending reports come from `GET /reports`.
 - **New** error: `422` "Start and destination are too close" when both points snap to the same intersection.
+- **New** `notice` (string or `null`): set in **Accessible** mode when the start or destination is reachable only by stairs (#33). Two points already joined by a step-free path, such as two spots on the same plaza, are never moved. The route then starts or ends at the nearest point of the step-free network, at most 100 m away. Example: `"Your start is only reachable by stairs, so the step-free route starts 20 m away."` `snapped_start` / `snapped_end` move to that point, so the dashed leg from the tapped point shows the gap. If the nearest step-free point is more than 100 m away, `404` with `"No step-free route found: your start is only reachable by stairs, and the nearest step-free point is 167 m away."`
 
 ## `POST /reports` (new): report a blocked sidewalk with a photo
 

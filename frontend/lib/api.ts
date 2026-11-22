@@ -30,7 +30,8 @@ export interface Route {
 
 export type RouteOutcome =
   | { status: "ok"; route: Route }
-  | { status: "error"; message: string };
+  // `offline`: the request never reached the server (no answer), so the route may still be fine.
+  | { status: "error"; message: string; offline?: true };
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
@@ -51,11 +52,11 @@ export async function fetchRoute(start: LatLon, end: LatLon, mode: RouteMode): P
   });
   try {
     const response = await fetch(`${API_URL}/route?${params}`);
-    const body: unknown = await response.json();
+    const body: unknown = await response.json().catch(() => null); // e.g. a proxy's HTML 502 page
     if (response.ok) return { status: "ok", route: body as Route };
     return { status: "error", message: errorMessage(response.status, body) };
   } catch {
-    return { status: "error", message: "Can't reach the Lumi server. Is the backend running?" };
+    return { status: "error", message: "Can't reach the Lumi server. Is the backend running?", offline: true };
   }
 }
 
