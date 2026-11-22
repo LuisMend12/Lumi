@@ -27,14 +27,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <ClerkProvider>
-      <html lang="en">
-        <body
-          className={`${barlow.variable} ${barlowCondensed.variable} antialiased`}
-        >
-          {children}
-        </body>
-      </html>
-    </ClerkProvider>
+    <html lang="en">
+      <body
+        className={`${barlow.variable} ${barlowCondensed.variable} antialiased`}
+      >
+        {/* Clerk Core 3 (v7) wants the provider inside <body>, not wrapping <html>. */}
+        <ClerkProvider>{children}</ClerkProvider>
+      </body>
+    </html>
   );
 }
