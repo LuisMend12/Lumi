@@ -76,7 +76,8 @@ body {
 .lumi-crawl {
   animation: lumi-crawl 40s linear infinite;
 }
-.lumi-crawl:hover {
+.lumi-crawl:hover,
+.lumi-crawl-strip:focus-visible .lumi-crawl {
   animation-play-state: paused;
 }
 @media (prefers-reduced-motion: reduce) {
