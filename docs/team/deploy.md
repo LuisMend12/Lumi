@@ -56,7 +56,7 @@ Never commit real values. Each folder has a `.env.example` with the names.
 
 ## Bring-up order
 
-1. **Database:** run `uv run python scripts/init_db.py` once from `backend/` with the rotated credentials in `backend/.env` (comes with #30). It's safe to re-run.
+1. **Database:** nothing to run. The backend creates the `reports` table (a TimescaleDB hypertable) and its index on startup, when `PG*` is set in `backend/.env`. It's safe on every restart.
 2. **Backend and photo agent:** fill in `backend/.env` and `mastra/.env`, then `docker compose up -d --build` from the repo root (see [One-command bring-up](#one-command-bring-up-with-docker-compose)).
    Check it: `curl https://<backend>/health` should return `{"status":"ok"}`, which takes about 10 s after start.
    **Keep port 4111 private.** Besides `/review`, Mastra serves its own built-in agent endpoints (and Studio), so anyone who can reach it can spend our Gemini quota. Compose already keeps it off the host; don't add a port mapping for it or open 4111 in the firewall.
