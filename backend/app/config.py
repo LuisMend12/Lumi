@@ -45,3 +45,10 @@ BLOCK_REPORT_WINDOW = timedelta(hours=24)
 NEARBY_RADIUS_M = 50
 # Largest photo POST /reports accepts (5 MiB).
 MAX_PHOTO_BYTES = 5 * 1024 * 1024
+
+# Demo mode (#38): LUMI_DEMO_MODE=1 adds /demo endpoints that act as simulated
+# users "sim-1" ... "sim-N". Off by default; never enable it in production.
+DEMO_MODE_ENV = "LUMI_DEMO_MODE"
+DEMO_USER_PREFIX = "sim-"
+DEMO_PHOTO_USER = "sim-photo"
+MAX_DEMO_VOTERS = 10

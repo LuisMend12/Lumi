@@ -37,7 +37,7 @@ SCHEMA = [
         blocked     boolean          NOT NULL,  -- always true for photo reports
         status      text,                       -- photo reports: confirmed, unverified or pending. NULL = vote
         photo       bytea,                      -- photo reports only
-        simulated   boolean          NOT NULL DEFAULT false,  -- demo data; nothing writes true yet
+        simulated   boolean          NOT NULL DEFAULT false,  -- demo data from /demo endpoints (#38)
         reported_at timestamptz      NOT NULL
     )
     """,
@@ -62,6 +62,7 @@ class StoredReport:
     reported_at: datetime
     status: PhotoVerdict | None = None
     photo: bytes | None = None
+    simulated: bool = False  # created by a demo endpoint, not a real person
 
 
 class MemoryReportStore:
@@ -75,6 +76,12 @@ class MemoryReportStore:
 
     def all(self) -> list[StoredReport]:
         return sorted(self._rows, key=lambda row: (row.reported_at, row.report_id))
+
+    def delete_simulated(self) -> int:
+        kept = [row for row in self._rows if not row.simulated]
+        removed = len(self._rows) - len(kept)
+        self._rows = kept
+        return removed
 
     def close(self) -> None:
         pass
@@ -91,8 +98,9 @@ class PostgresReportStore:
 
     def add(self, row: StoredReport) -> None:
         self._connection().execute(
-            "INSERT INTO reports (report_id, segment_id, user_id, lat, lon, blocked, status, photo, reported_at)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "INSERT INTO reports"
+            " (report_id, segment_id, user_id, lat, lon, blocked, status, photo, simulated, reported_at)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 row.report_id,
                 row.segment_id,
@@ -102,6 +110,7 @@ class PostgresReportStore:
                 row.blocked,
                 row.status.value if row.status else None,
                 row.photo,
+                row.simulated,
                 row.reported_at,
             ),
         )
@@ -111,7 +120,7 @@ class PostgresReportStore:
         nothing else needs them, and loading every photo would slow startup."""
         rows = self._connection().execute(
             "SELECT report_id, segment_id, user_id, lat, lon, blocked, reported_at, status,"
-            " CASE WHEN status = 'pending' THEN photo END"
+            " CASE WHEN status = 'pending' THEN photo END, simulated"
             " FROM reports ORDER BY reported_at, report_id"
         ).fetchall()
         return [
@@ -120,9 +129,14 @@ class PostgresReportStore:
                 reported_at=reported_at.astimezone(UTC),
                 status=PhotoVerdict(status) if status else None,
                 photo=bytes(photo) if photo is not None else None,
+                simulated=simulated,
             )
-            for *columns, reported_at, status, photo in rows
+            for *columns, reported_at, status, photo, simulated in rows
         ]
+
+    def delete_simulated(self) -> int:
+        """Remove demo rows only. Returns how many were deleted."""
+        return self._connection().execute("DELETE FROM reports WHERE simulated").rowcount
 
     def close(self) -> None:
         self._conn.close()

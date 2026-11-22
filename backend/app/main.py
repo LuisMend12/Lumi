@@ -1,6 +1,7 @@
 """Lumi API: street routing and community reports around Boston University."""
 
 import logging
+import os
 import threading
 from collections.abc import Sequence
 from contextlib import asynccontextmanager
@@ -14,7 +15,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from app.config import GRAPH_PATH, MAX_PHOTO_BYTES, MAX_SNAP_DISTANCE_M, NEARBY_RADIUS_M, frontend_origins
+from app.config import (
+    DEMO_MODE_ENV,
+    DEMO_PHOTO_USER,
+    DEMO_USER_PREFIX,
+    GRAPH_PATH,
+    MAX_DEMO_VOTERS,
+    MAX_PHOTO_BYTES,
+    MAX_SNAP_DISTANCE_M,
+    NEARBY_RADIUS_M,
+    VOTES_TO_FLIP,
+    frontend_origins,
+)
 from app.reports import PhotoReviewer, PhotoVerdict, SegmentReports, SegmentStatus, new_report_id
 from app.routing import (
     Hazards,
@@ -62,6 +74,21 @@ class VoteIn(BaseModel):
 class VoteOut(BaseModel):
     outcome: Literal["vote_recorded", "status_changed", "photo_required"]
     segment_status: SegmentStatus
+
+
+class DemoVotesIn(BaseModel):
+    blocked: bool
+    voters: int = Field(default=VOTES_TO_FLIP, ge=1, le=MAX_DEMO_VOTERS)
+
+
+class DemoVotesOut(BaseModel):
+    votes_cast: int
+    outcome: Literal["vote_recorded", "status_changed", "photo_required"]  # from the last voter
+    segment_status: SegmentStatus
+
+
+class DemoResetOut(BaseModel):
+    removed: int
 
 
 class NearbySegmentOut(BaseModel):
@@ -120,11 +147,15 @@ def create_app(
     hazards: Hazards | None = None,
     review_photo: PhotoReviewer | None = None,
     store: PostgresReportStore | MemoryReportStore | None = None,
+    demo_mode: bool | None = None,
 ) -> FastAPI:
     """`hazards` are fixed extra hazards (tests use them); confirmed reports are added on top.
 
     `store` defaults to Tiger Data if PGHOST is set, else memory (see app/storage.py).
+    `demo_mode` defaults to LUMI_DEMO_MODE=1; it adds the /demo endpoints (#38).
     """
+    if demo_mode is None:
+        demo_mode = os.environ.get(DEMO_MODE_ENV) == "1"
     reviewer = review_photo if review_photo is not None else unconfigured_reviewer()
     static_hazards = hazards if hazards is not None else {}
     # Set at startup by `lifespan`; the endpoints below read them.
@@ -132,19 +163,27 @@ def create_app(
     segments: SegmentIndex
     reports: SegmentReports
     report_store: PostgresReportStore | MemoryReportStore  # every write goes here first, then to `reports`
+    simulated_ids: set[str] = set()  # photo reports created by /demo endpoints, shown as "Simulated"
     # SegmentReports isn't thread-safe and FastAPI runs sync endpoints in a
     # thread pool, so every read and write of `reports` holds this lock. Writes
     # also hold it while saving to the store, so stored order = applied order.
     lock = threading.Lock()
 
+    def rebuild_from_store() -> int:
+        """Replace in-memory status with a replay of the stored rows (startup and demo reset)."""
+        nonlocal reports, simulated_ids
+        rows = report_store.all()
+        reports = SegmentReports(review_photo=reviewer)
+        simulated_ids = {row.report_id for row in rows if row.simulated}
+        return replay(rows, reports, segments)  # stored statuses; never calls the reviewer
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        nonlocal street_graph, segments, reports, report_store
+        nonlocal street_graph, segments, report_store
         street_graph = graph if graph is not None else load_street_graph()
         segments = SegmentIndex(street_graph)
-        reports = SegmentReports(review_photo=reviewer)
         report_store = store if store is not None else default_store()
-        replayed = replay(report_store.all(), reports, segments)  # stored statuses; never calls the reviewer
+        replayed = rebuild_from_store()
         logger.info("Rebuilt segment status from %d stored reports", replayed)
         try:
             yield
@@ -297,11 +336,70 @@ def create_app(
                 location=segments.midpoint(sid),
                 verification=r.verdict,
                 reported_at=_iso_utc(r.reported_at),
-                simulated=False,  # no simulated demo reports yet
+                simulated=r.report_id in simulated_ids,
             )
             for r in listed
             if (sid := _sid(r.segment)) in segments  # a report off this graph can't be placed on the map
         ]
+
+    if not demo_mode:
+        return app  # the /demo endpoints below don't exist, so they're 404
+
+    # --- Demo mode (#38): simulated users "sim-1" ... "sim-N". They skip login
+    # and the nearby check, but the normal report rules still apply. Every row
+    # they create is stored with simulated=True and shown as "Simulated".
+
+    def demo_segment(segment_id: str) -> SegmentKey:
+        if segment_id not in segments:
+            raise HTTPException(status_code=404, detail=f"No sidewalk segment with id {segment_id}.")
+        return _key(segments, segment_id)
+
+    @app.post("/demo/segments/{segment_id}/block", response_model=ReportOut)
+    def demo_block(segment_id: str) -> ReportOut:
+        """A simulated photo report the agent "confirmed", without calling the agent."""
+        segment = demo_segment(segment_id)
+        lat, lon = segments.midpoint(segment_id)
+        report_id = new_report_id()
+        with lock:
+            now = datetime.now(UTC)
+            save(
+                StoredReport(
+                    report_id, segment_id, DEMO_PHOTO_USER, lat, lon, True, now,
+                    status=PhotoVerdict.CONFIRMED, photo=b"", simulated=True,
+                )
+            )
+            simulated_ids.add(report_id)
+            outcome = reports.report_blocked_with_photo(
+                segment, DEMO_PHOTO_USER, b"", now, report_id=report_id, verdict=PhotoVerdict.CONFIRMED
+            )
+            status = reports.status(segment)
+        return ReportOut(report_id=report_id, segment_id=segment_id, outcome=outcome.value, segment_status=status)
+
+    @app.post("/demo/segments/{segment_id}/votes", response_model=DemoVotesOut)
+    def demo_votes(segment_id: str, body: DemoVotesIn) -> DemoVotesOut:
+        segment = demo_segment(segment_id)
+        lat, lon = segments.midpoint(segment_id)
+        outcome = None
+        with lock:
+            for n in range(1, body.voters + 1):
+                user = f"{DEMO_USER_PREFIX}{n}"
+                now = datetime.now(UTC)
+                if body.blocked and reports.needs_photo(user, now):
+                    outcome = "photo_required"
+                    continue
+                save(StoredReport(new_vote_id(), segment_id, user, lat, lon, body.blocked, now, simulated=True))
+                outcome = reports.vote(segment, user, body.blocked, now).value
+            status = reports.status(segment)
+        return DemoVotesOut(votes_cast=body.voters, outcome=outcome, segment_status=status)
+
+    @app.post("/demo/reset", response_model=DemoResetOut)
+    def demo_reset() -> DemoResetOut:
+        """Delete simulated rows only, then rebuild every segment's status from the real ones."""
+        with lock:
+            removed = report_store.delete_simulated()
+            rebuild_from_store()
+        logger.info("Demo reset: removed %d simulated rows", removed)
+        return DemoResetOut(removed=removed)
 
     return app
 

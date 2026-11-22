@@ -112,3 +112,23 @@ This returns reported segments within 50 m, so the app can show the one-tap prom
 
 - `verification` is one of `confirmed`, `unverified` or `pending`. The UI must label each one differently and must never present `unverified` or `pending` as fact.
 - `simulated: true` marks reports created for the demo. The UI must show a visible "Simulated" badge on them.
+
+## Demo mode (#38): simulated users
+
+These endpoints exist **only** when the backend runs with `LUMI_DEMO_MODE=1`. Otherwise they return `404`. They act as simulated users `sim-1` … `sim-N` and `sim-photo`, which skip login and the 50 m nearby check. The normal report rules (4 different people, the abuse limit) still apply. Every row they create is stored with `simulated: true`, and `GET /reports` shows it that way, so the UI must show its "Simulated" badge.
+
+### `POST /demo/segments/{segment_id}/block`
+
+A simulated photo report treated as confirmed by the photo agent. The agent isn't called. The response has the same shape as `POST /reports`. `404` if the segment doesn't exist.
+
+### `POST /demo/segments/{segment_id}/votes`
+
+```json
+{ "blocked": false, "voters": 4 }
+```
+
+`voters` is optional (default 4, max 10). The response is `{"votes_cast": 4, "outcome": "status_changed", "segment_status": "open"}`, where `outcome` comes from the last voter. 4 simulated "unblocked" votes reopen a blocked segment.
+
+### `POST /demo/reset`
+
+Deletes simulated rows only, then rebuilds every segment's status from the real rows. The response is `{"removed": 3}`.
