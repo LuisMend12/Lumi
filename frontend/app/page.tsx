@@ -709,6 +709,7 @@ function ModeCard({ mode, outcome, isSelected, onSelect }: ModeCardProps) {
           <span className="max-w-[11rem] self-end text-[13px] leading-snug">
             {errorText ?? MODE_SUMMARIES[mode]}
             {mode === "accessible" && <span className="mt-1 block font-semibold">{ACCESSIBLE_LIMITATION}</span>}
+            {route?.notice && <span className="mt-1 block">{route.notice}</span>}
           </span>
           {/* The backend's own wording for the chosen mode, limits included (team rule: reuse it). */}
           {route && (
@@ -738,6 +739,7 @@ function ModeCard({ mode, outcome, isSelected, onSelect }: ModeCardProps) {
         <span className="col-span-2 col-start-2 mt-1 text-[13px] leading-snug text-[var(--storm)]">
           {errorText ?? MODE_SUMMARIES[mode]}
           {mode === "accessible" && <span className="mt-0.5 block font-semibold text-[var(--navy)]">{ACCESSIBLE_LIMITATION}</span>}
+          {route?.notice && <span className="mt-0.5 block text-[var(--navy)]">{route.notice}</span>}
         </span>
       </button>
     </li>
