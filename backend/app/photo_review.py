@@ -1,44 +1,44 @@
-"""Photo review with Claude vision: does a report photo show a blocked sidewalk?
+"""Photo review: does a report photo show a blocked sidewalk?
 
-`make_claude_reviewer()` returns a `PhotoReviewer` for `SegmentReports`.
-It never raises. Anything that stops a real answer (API errors, timeouts,
-refusals, unparseable output, unsupported or oversized images) returns
-`UNAVAILABLE`, so the report stays pending and can be retried later.
+The model call runs in the Mastra service (`mastra/` at the repo root): a
+`sidewalkReviewer` agent on a free-tier Google Gemini model. This module sends
+the photo to its `POST /review` endpoint and turns the assessment into a
+`PhotoVerdict`. The confirm rule stays here, next to the report rules.
 
-The API key comes from `ANTHROPIC_API_KEY` (put it in `backend/.env`).
+`make_mastra_reviewer()` returns a `PhotoReviewer` for `SegmentReports`.
+It never raises. Anything that stops a real answer (connection errors,
+timeouts, error responses, invalid JSON, unsupported or oversized images)
+returns `UNAVAILABLE`, so the report stays pending and can be retried later.
+
+The service URL comes from `LUMI_MASTRA_URL` (default `http://localhost:4111`).
 """
 
 import base64
+import json
 import logging
-from typing import Any, Literal
+import os
+import urllib.error
+import urllib.request
+from typing import Literal
 
-import anthropic
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from app.reports import PhotoReviewer, PhotoVerdict
 
 logger = logging.getLogger(__name__)
 
-MODEL = "claude-opus-5-5"
-# Claude Opus 5.5 always thinks first, and thinking counts toward max_tokens.
-# Too low a cap cuts the answer off (no parsed output -> report stuck pending).
-MAX_TOKENS = 16000
-MAX_IMAGE_BYTES = 5 * 1024 * 1024  # API limit for base64 images
-
-PROMPT = (
-    "You are assessing a photo submitted as a winter sidewalk hazard report in Boston. "
-    "Judge only what is visible in the photo. If it does not show a sidewalk or walkway, "
-    "or shows no hazard, set is_sidewalk_hazard to false, kind to 'none' and severity "
-    "to 'none'. 'blocked' means a pedestrian cannot get through at all. "
-    "'accessibility_issue' means walkable on foot but not for a wheelchair, walker, "
-    "or stroller."
-)
+DEFAULT_MASTRA_URL = "http://localhost:4111"  # Mastra's default port
+MASTRA_URL_ENV = "LUMI_MASTRA_URL"
+REVIEW_PATH = "/review"
+MAX_IMAGE_BYTES = 5 * 1024 * 1024  # same limit as the Mastra service
 
 # Confidence levels that may confirm a blocked report.
 CONFIRMING_CONFIDENCE = frozenset({"medium", "high"})
 
 
 class PhotoAssessment(BaseModel):
+    """The JSON body of a 200 response from `POST /review`."""
+
     is_sidewalk_hazard: bool
     kind: Literal["snow", "ice", "slush", "puddle", "obstruction", "none"]
     severity: Literal["none", "minor", "moderate", "severe"]
@@ -59,22 +59,11 @@ def detect_media_type(photo: bytes) -> str | None:
     return None
 
 
-def build_request(photo: bytes, media_type: str) -> dict[str, Any]:
-    """Keyword arguments for `client.messages.parse(...)`."""
-    image = {
-        "type": "image",
-        "source": {
-            "type": "base64",
-            "media_type": media_type,
-            "data": base64.standard_b64encode(photo).decode("utf-8"),
-        },
-    }
+def build_request_body(photo: bytes, media_type: str) -> dict[str, str]:
+    """JSON body for `POST /review` on the Mastra service."""
     return {
-        "model": MODEL,
-        "max_tokens": MAX_TOKENS,
-        "output_config": {"effort": "medium"},
-        "messages": [{"role": "user", "content": [image, {"type": "text", "text": PROMPT}]}],
-        "output_format": PhotoAssessment,
+        "image_base64": base64.standard_b64encode(photo).decode("ascii"),
+        "media_type": media_type,
     }
 
 
@@ -89,20 +78,58 @@ def verdict_for(assessment: PhotoAssessment) -> PhotoVerdict:
     return PhotoVerdict.REJECTED
 
 
-def make_claude_reviewer(
-    client: anthropic.Anthropic | None = None, *, timeout_s: float = 20.0
-) -> PhotoReviewer:
-    """A `PhotoReviewer` backed by Claude vision.
+class ReviewUnavailable(Exception):
+    """The Mastra service gave no usable assessment. The message is safe to log."""
 
-    Without `client`, an `anthropic.Anthropic()` is created on the first call
-    (it reads `ANTHROPIC_API_KEY`). Tests pass a fake client instead.
+
+def request_assessment(
+    photo: bytes, media_type: str, *, base_url: str, timeout_s: float
+) -> PhotoAssessment:
+    """Send one photo to `POST /review`. Raises `ReviewUnavailable` on any failure."""
+    url = base_url.rstrip("/") + REVIEW_PATH
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(build_request_body(photo, media_type)).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_s) as response:
+            raw = response.read()
+    except urllib.error.HTTPError as error:
+        raise ReviewUnavailable(f"status {error.code}{_error_code(error)}") from None
+    except TimeoutError:
+        raise ReviewUnavailable(f"timed out after {timeout_s} s") from None
+    except urllib.error.URLError as error:
+        if isinstance(error.reason, TimeoutError):
+            raise ReviewUnavailable(f"timed out after {timeout_s} s") from None
+        raise ReviewUnavailable(f"cannot reach {url} ({type(error.reason).__name__})") from None
+    except Exception as error:
+        raise ReviewUnavailable(f"unexpected {type(error).__name__}") from None
+
+    try:
+        return PhotoAssessment.model_validate_json(raw)
+    except ValidationError as error:
+        # Pydantic reports invalid JSON as a validation error too.
+        kinds = sorted({detail["type"] for detail in error.errors()})
+        raise ReviewUnavailable(f"response is not a valid assessment ({', '.join(kinds)})") from None
+
+
+def _error_code(error: urllib.error.HTTPError) -> str:
+    """The service's `error` code from a JSON error body, if there is one."""
+    try:
+        code = json.loads(error.read()).get("error")
+    except Exception:
+        return ""
+    return f", {code}" if isinstance(code, str) else ""
+
+
+def make_mastra_reviewer(base_url: str | None = None, *, timeout_s: float = 20.0) -> PhotoReviewer:
+    """A `PhotoReviewer` backed by the Mastra service's `POST /review`.
+
+    Without `base_url`, the URL is read from `LUMI_MASTRA_URL` on each call,
+    falling back to `http://localhost:4111`.
     """
-    clients: list[Any] = [client] if client is not None else []
-
-    def get_client() -> Any:
-        if not clients:
-            clients.append(anthropic.Anthropic())
-        return clients[0]
 
     def review(photo: bytes) -> PhotoVerdict:
         media_type = detect_media_type(photo)
@@ -111,28 +138,14 @@ def make_claude_reviewer(
         if len(photo) > MAX_IMAGE_BYTES:
             return _unavailable(f"image is {len(photo)} bytes, over the {MAX_IMAGE_BYTES} limit")
 
+        url = base_url or os.environ.get(MASTRA_URL_ENV) or DEFAULT_MASTRA_URL
         try:
-            response = (
-                get_client()
-                .with_options(timeout=timeout_s, max_retries=1)
-                .messages.parse(**build_request(photo, media_type))
-            )
-        except anthropic.APIError as error:
-            status = getattr(error, "status_code", None)
-            detail = f" (status {status})" if status is not None else ""
-            return _unavailable(f"{type(error).__name__}{detail}")
+            assessment = request_assessment(photo, media_type, base_url=url, timeout_s=timeout_s)
+        except ReviewUnavailable as error:
+            return _unavailable(str(error))
         except Exception as error:  # never raise into the report rules
             return _unavailable(f"unexpected {type(error).__name__}")
-
-        try:
-            if response.stop_reason == "refusal":
-                return _unavailable("model refused")
-            parsed = response.parsed_output
-            if parsed is None:
-                return _unavailable(f"no parsed output (stop_reason={response.stop_reason})")
-            return verdict_for(parsed)
-        except Exception as error:
-            return _unavailable(f"unexpected {type(error).__name__} reading the response")
+        return verdict_for(assessment)
 
     return review
 
