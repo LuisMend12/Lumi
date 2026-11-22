@@ -1,12 +1,12 @@
 """Report endpoints: POST /reports, votes, nearby segments and the report list."""
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app.config import MAX_PHOTO_BYTES
+from app.config import MAX_PHOTO_BYTES, MAX_PHOTO_REPORTS_IN_WINDOW
 from app.main import SIGN_IN_INVALID, SIGN_IN_REQUIRED, create_app
 from app.reports import PhotoVerdict
 from app.routing import RouteMode
@@ -464,3 +464,57 @@ def test_normal_photo_upload_still_works(confirming):
     response = report(confirming)
 
     assert response.status_code == 201
+
+
+# Photo report rate limit (#82): each photo reaching the reviewer is a paid Gemini call.
+
+
+def counting_reviewer():
+    calls = []
+
+    def review(photo):
+        calls.append(photo)
+        return PhotoVerdict.CONFIRMED
+
+    return review, calls
+
+
+def test_photo_reports_over_the_hourly_limit_are_refused_before_review(street_graph):
+    review, calls = counting_reviewer()
+    with make_client(street_graph, review_photo=review) as client:
+        for _ in range(MAX_PHOTO_REPORTS_IN_WINDOW):
+            assert report(client).status_code == 201
+
+        refused = report(client)
+
+    assert refused.status_code == 429
+    assert f"{MAX_PHOTO_REPORTS_IN_WINDOW} photo reports" in refused.json()["detail"]
+    assert len(calls) == MAX_PHOTO_REPORTS_IN_WINDOW  # the refused photo never reached the reviewer
+
+
+def test_photo_limit_is_per_user(street_graph):
+    review, _ = counting_reviewer()
+    with make_client(street_graph, review_photo=review) as client:
+        for _ in range(MAX_PHOTO_REPORTS_IN_WINDOW):
+            report(client, user="alice")
+
+        assert report(client, user="bob").status_code == 201
+
+
+def test_uploads_refused_before_review_do_not_count(street_graph):
+    review, _ = counting_reviewer()
+    with make_client(street_graph, review_photo=review) as client:
+        for _ in range(MAX_PHOTO_REPORTS_IN_WINDOW):
+            assert report(client, photo=GIF).status_code == 415
+
+        assert report(client).status_code == 201
+
+
+def test_photo_reports_older_than_the_window_do_not_count(street_graph, monkeypatch):
+    monkeypatch.setattr("app.main.PHOTO_REPORT_WINDOW", timedelta(0))
+    review, _ = counting_reviewer()
+    with make_client(street_graph, review_photo=review) as client:
+        for _ in range(MAX_PHOTO_REPORTS_IN_WINDOW):
+            report(client)
+
+        assert report(client).status_code == 201

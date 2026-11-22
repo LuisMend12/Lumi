@@ -23,8 +23,10 @@ from app.config import (
     GRAPH_PATH,
     MAX_DEMO_VOTERS,
     MAX_PHOTO_BYTES,
+    MAX_PHOTO_REPORTS_IN_WINDOW,
     MAX_SNAP_DISTANCE_M,
     NEARBY_RADIUS_M,
+    PHOTO_REPORT_WINDOW,
     VOTES_TO_FLIP,
     frontend_origins,
 )
@@ -178,6 +180,18 @@ def create_app(
     # thread pool, so every read and write of `reports` holds this lock. Writes
     # also hold it while saving to the store, so stored order = applied order.
     lock = threading.Lock()
+    photo_reviews: dict[str, list[datetime]] = {}  # user -> when their photos went to the reviewer (#82)
+
+    def reserve_photo_review(user_id: str) -> bool:
+        """Count one review for this user, or return False if they're over the limit."""
+        now = datetime.now(UTC)
+        with lock:
+            recent = [t for t in photo_reviews.get(user_id, []) if now - t < PHOTO_REPORT_WINDOW]
+            if len(recent) >= MAX_PHOTO_REPORTS_IN_WINDOW:
+                photo_reviews[user_id] = recent
+                return False
+            photo_reviews[user_id] = [*recent, now]
+            return True
 
     def rebuild_from_store() -> int:
         """Replace in-memory status with a replay of the stored rows (startup and demo reset)."""
@@ -288,6 +302,11 @@ def create_app(
                 detail=f"This spot is outside Lumi's coverage area ({distance_m:.0f} m from the nearest mapped sidewalk).",
             )
 
+        if not reserve_photo_review(user_id):
+            raise HTTPException(
+                status_code=429,
+                detail=f"You've sent {MAX_PHOTO_REPORTS_IN_WINDOW} photo reports in the last hour. Try again later.",
+            )
         verdict = _review(reviewer, data)  # outside the lock: it may be slow
         report_id = new_report_id()
         segment = _key(segments, sid)
