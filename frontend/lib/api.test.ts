@@ -72,6 +72,15 @@ describe("fetchRoute", () => {
     });
   });
 
+  it("treats a non-JSON error page (a proxy's 502) as a server error, not as unreachable", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("<html>502 Bad Gateway</html>", { status: 502 })));
+
+    expect(await fetchRoute(START, END, "shortest")).toEqual({
+      status: "error",
+      message: "Something went wrong getting this route.",
+    });
+  });
+
   it("says the server can't be reached when the request itself fails", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
 
