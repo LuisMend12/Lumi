@@ -120,6 +120,9 @@ export default function Home() {
   // results from an older request are dropped (#54, #59).
   const pointsRef = useRef<{ start: LatLon | null; end: LatLon | null }>({ start: null, end: null });
   const routeRequestRef = useRef(0);
+  // The request number of a load the visitor asked for while it runs, else null.
+  const explicitLoadRef = useRef<number | null>(null);
+  const reportsRequestRef = useRef(0);
 
   function setPoints(nextStart: LatLon | null, nextEnd: LatLon | null) {
     pointsRef.current = { start: nextStart, end: nextEnd };
@@ -129,18 +132,29 @@ export default function Home() {
   }
 
   async function loadRoutes(from: LatLon, to: LatLon, { quiet = false } = {}) {
+    // A background refresh never replaces a load the visitor asked for that's still running.
+    if (quiet && explicitLoadRef.current === routeRequestRef.current) return;
     const request = ++routeRequestRef.current;
-    if (!quiet) setIsLoading(true);
+    if (!quiet) {
+      explicitLoadRef.current = request;
+      setIsLoading(true);
+    }
     const results = await Promise.all(ROUTE_MODES.map((mode) => fetchRoute(from, to, mode)));
     if (request !== routeRequestRef.current) return; // the user picked new points meanwhile
+    explicitLoadRef.current = null;
+    // A background refresh that couldn't reach the server keeps the routes on screen:
+    // a network blip shouldn't wipe a good route. Loads the visitor asked for show the error.
+    if (quiet && results.some((outcome) => outcome.status === "error" && outcome.offline)) return;
     setOutcomes(Object.fromEntries(ROUTE_MODES.map((mode, i) => [mode, results[i]])));
     setIsLoading(false);
   }
 
   // A sidewalk may have changed status: show the new reports and recompute the routes on screen.
   async function refreshAfterChange({ quiet = false } = {}) {
+    const reportsRequest = ++reportsRequestRef.current;
     const result = await fetchReports();
-    if (result.ok) setReports(result.data);
+    // An older reports response that arrives late doesn't overwrite a newer one.
+    if (result.ok && reportsRequest === reportsRequestRef.current) setReports(result.data);
     const { start: from, end: to } = pointsRef.current;
     if (from && to) await loadRoutes(from, to, { quiet });
   }
@@ -346,7 +360,10 @@ export default function Home() {
           notice={locationNotice}
           onChange={(isOn) => {
             setIsNearbyOn(isOn);
-            if (!isOn) setLocationNotice(null);
+            if (!isOn) {
+              setLocationNotice(null);
+              setNearby(null); // don't flash an old sidewalk question when checks are turned back on
+            }
           }}
         />
         {isLoading && <p className="text-sm text-[var(--muted)]">Finding routes…</p>}

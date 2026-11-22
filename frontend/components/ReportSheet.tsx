@@ -21,7 +21,10 @@ export default function ReportSheet({ getToken, notice, onClose, onReported }: P
 
   // The preview URL holds the photo in memory; release it when it changes or the sheet closes.
   useEffect(() => {
-    if (!photo) return;
+    if (!photo) {
+      setPreviewUrl(null); // the picker was cancelled: drop the revoked preview, don't show a broken image (#56)
+      return;
+    }
     const url = URL.createObjectURL(photo);
     setPreviewUrl(url);
     return () => URL.revokeObjectURL(url);
