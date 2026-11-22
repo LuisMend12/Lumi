@@ -91,6 +91,11 @@ class DemoResetOut(BaseModel):
     removed: int
 
 
+class DemoNearestOut(BaseModel):
+    segment_id: str
+    distance_m: float
+
+
 class NearbySegmentOut(BaseModel):
     segment_id: str
     status: SegmentStatus
@@ -353,6 +358,22 @@ def create_app(
         if segment_id not in segments:
             raise HTTPException(status_code=404, detail=f"No sidewalk segment with id {segment_id}.")
         return _key(segments, segment_id)
+
+    @app.get("/demo/status")
+    def demo_status() -> dict:
+        """Lets the frontend show its Demo panel only when demo mode is on (404 otherwise)."""
+        return {"demo_mode": True}
+
+    @app.get("/demo/segments/nearest", response_model=DemoNearestOut)
+    def demo_nearest(lat: Latitude, lon: Longitude) -> DemoNearestOut:
+        """The sidewalk segment closest to a point, e.g. halfway along a route the demo will block."""
+        sid, distance_m = segments.nearest(lat, lon)
+        if distance_m > MAX_SNAP_DISTANCE_M:
+            raise HTTPException(
+                status_code=422,
+                detail=f"This spot is outside Lumi's coverage area ({distance_m:.0f} m from the nearest mapped sidewalk).",
+            )
+        return DemoNearestOut(segment_id=sid, distance_m=round(distance_m, 1))
 
     @app.post("/demo/segments/{segment_id}/block", response_model=ReportOut)
     def demo_block(segment_id: str) -> ReportOut:

@@ -120,3 +120,30 @@ def test_real_votes_still_need_a_user_and_nearby_check_in_demo_mode(demo):
     response = vote(demo, SEGMENT, user=None, blocked=True)
 
     assert response.status_code == 401
+
+
+def test_demo_status_says_demo_mode_is_on(demo):
+    assert demo.get("/demo/status").json() == {"demo_mode": True}
+
+
+def test_demo_status_is_404_without_demo_mode(street_graph, monkeypatch):
+    monkeypatch.delenv("LUMI_DEMO_MODE", raising=False)
+    with TestClient(create_app(graph=street_graph, review_photo=confirm)) as client:
+        assert client.get("/demo/status").status_code == 404
+
+
+def test_nearest_segment_to_a_point_on_a_route(demo):
+    lat, lon = NEAR["A-B"]
+
+    response = demo.get("/demo/segments/nearest", params={"lat": lat, "lon": lon})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["segment_id"] == "A-B"
+    assert body["distance_m"] < 5
+
+
+def test_nearest_segment_outside_coverage_is_422(demo):
+    response = demo.get("/demo/segments/nearest", params={"lat": 42.3601, "lon": -71.0589})  # downtown
+
+    assert response.status_code == 422

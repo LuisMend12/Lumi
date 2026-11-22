@@ -117,6 +117,14 @@ This returns reported segments within 50 m, so the app can show the one-tap prom
 
 These endpoints exist **only** when the backend runs with `LUMI_DEMO_MODE=1`. Otherwise they return `404`. They act as simulated users `sim-1` … `sim-N` and `sim-photo`, which skip login and the 50 m nearby check. The normal report rules (4 different people, the abuse limit) still apply. Every row they create is stored with `simulated: true`, and `GET /reports` shows it that way, so the UI must show its "Simulated" badge.
 
+### `GET /demo/status`
+
+Returns `{"demo_mode": true}` in demo mode, and `404` otherwise. The frontend uses it to decide whether to show its Demo panel.
+
+### `GET /demo/segments/nearest?lat=&lon=`
+
+The sidewalk segment closest to a point: `{"segment_id": "61326726-61340937", "distance_m": 2.4}`. It gives `422` outside the coverage area. The Demo panel passes the point halfway between two consecutive points of a route, which lies on a segment that route uses.
+
 ### `POST /demo/segments/{segment_id}/block`
 
 A simulated photo report treated as confirmed by the photo agent. The agent isn't called. The response has the same shape as `POST /reports`. `404` if the segment doesn't exist.
