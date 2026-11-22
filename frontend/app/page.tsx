@@ -292,6 +292,9 @@ function ModeCard({ mode, outcome, isSelected, onSelect }: ModeCardProps) {
         {mode === "accessible" && (
           <span className="mt-1 block text-xs font-medium text-amber-800">{ACCESSIBLE_LIMITATION}</span>
         )}
+        {outcome?.status === "ok" && outcome.route.notice && (
+          <span className="mt-1 block text-xs font-medium text-[var(--navy)]">{outcome.route.notice}</span>
+        )}
         {isSelected && outcome?.status === "ok" && (
           <span className="mt-2 block text-sm leading-snug text-[var(--navy)]">{outcome.route.mode_description}</span>
         )}

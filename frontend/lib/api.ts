@@ -25,6 +25,7 @@ export interface Route {
   hazards: Hazard[];
   snapped_start?: LatLon;
   snapped_end?: LatLon;
+  notice?: string | null; // Accessible: why the route starts or ends at a nearby step-free point (#33)
 }
 
 export type RouteOutcome =
