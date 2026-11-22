@@ -435,3 +435,32 @@ def test_cors_origins_come_from_the_environment(street_graph, monkeypatch):
 
     assert allowed.headers["access-control-allow-origin"] == "https://preview.lumi.example"
     assert "access-control-allow-origin" not in localhost.headers
+
+
+# --- #58: oversized uploads are refused before the body is read ------------------
+
+def test_upload_declaring_more_than_the_limit_is_413_before_sign_in(confirming):
+    # No Authorization header: the size check must answer first, without reading the body.
+    response = confirming.post(
+        "/reports",
+        content=b"x" * 16,
+        headers={"Content-Type": "multipart/form-data; boundary=x", "Content-Length": str(7 * 1024 * 1024)},
+    )
+
+    assert response.status_code == 413
+    assert "5 MB" in response.json()["detail"]
+
+
+def test_upload_without_a_declared_length_is_411(confirming):
+    def chunks():
+        yield b"--x\r\n"
+
+    response = confirming.post("/reports", content=chunks(), headers={"Content-Type": "multipart/form-data; boundary=x"})
+
+    assert response.status_code == 411
+
+
+def test_normal_photo_upload_still_works(confirming):
+    response = report(confirming)
+
+    assert response.status_code == 201

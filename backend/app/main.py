@@ -42,6 +42,7 @@ from app.routing import (
 )
 from app.routing import segment_id as make_segment_id
 from app.segments import SegmentIndex
+from app.upload_limit import FORM_OVERHEAD_BYTES, UploadSizeLimit
 from app.storage import MemoryReportStore, PostgresReportStore, StoredReport, default_store, new_vote_id, replay
 
 logger = logging.getLogger(__name__)
@@ -211,6 +212,13 @@ def create_app(
             ) from error
 
     app = FastAPI(title="Lumi API", lifespan=lifespan)
+    # Added before CORS so CORS stays outermost and the 413/411 replies still carry CORS headers.
+    app.add_middleware(
+        UploadSizeLimit,
+        paths={"/reports"},
+        max_body_bytes=MAX_PHOTO_BYTES + FORM_OVERHEAD_BYTES,
+        limit_label="5 MB",
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=frontend_origins(),
