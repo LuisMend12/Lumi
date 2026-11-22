@@ -5,7 +5,7 @@ dict, and a weight function combines the two on every route request.
 """
 
 from collections.abc import Callable, Hashable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from enum import Enum
 
 import networkx as nx
@@ -64,7 +64,14 @@ class Route:
     nodes: list[Hashable]
     coordinates: list[tuple[float, float]]  # (lat, lon) in walking order
     distance_m: float
-    hazards: list[Hazard]  # hazards on segments the route still uses
+    hazards: list["RouteHazard"]  # hazards on segments the route still uses, in walking order
+
+
+@dataclass(frozen=True)
+class RouteHazard(Hazard):
+    """A hazard on a segment the route uses, plus where it is. /route returns these as-is."""
+
+    location: tuple[float, float]  # (lat, lon) segment midpoint, where the warning goes on the map
 
 
 class NoRouteError(Exception):
@@ -74,6 +81,17 @@ class NoRouteError(Exception):
 def segment_key(u: Hashable, v: Hashable) -> SegmentKey:
     """Same key for both walking directions of a sidewalk segment."""
     return frozenset((u, v))
+
+
+def segment_id(u: Hashable, v: Hashable) -> str:
+    """Public id of a sidewalk segment: "<u>-<v>" with the smaller node id first.
+
+    Both walking directions share one id. Node ids are compared as values, so
+    OSM's int ids sort numerically (9 before 10), and the test graph's strings
+    sort alphabetically.
+    """
+    first, second = (u, v) if u <= v else (v, u)
+    return f"{first}-{second}"
 
 
 def _risk(hazards: list[Hazard]) -> float:
@@ -121,8 +139,18 @@ def find_route(
         nodes=nodes,
         coordinates=coordinates,
         distance_m=sum(graph.edges[u, v]["length"] for u, v in segments),
-        hazards=[h for u, v in segments for h in hazards.get(segment_key(u, v), [])],
+        hazards=[
+            RouteHazard(**asdict(h), location=_midpoint(graph, u, v))
+            for u, v in segments
+            for h in hazards.get(segment_key(u, v), [])
+        ],
     )
+
+
+def _midpoint(graph: nx.DiGraph, u: Hashable, v: Hashable) -> tuple[float, float]:
+    (lat_u, lon_u), (lat_v, lon_v) = _lat_lon(graph, u), _lat_lon(graph, v)
+    # 7 decimals is about 1 cm; it drops float noise like -71.10740000000001.
+    return (round((lat_u + lat_v) / 2, 7), round((lon_u + lon_v) / 2, 7))
 
 
 def _lat_lon(graph: nx.DiGraph, node: Hashable) -> tuple[float, float]:

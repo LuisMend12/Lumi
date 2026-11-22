@@ -1,7 +1,16 @@
 import pytest
 from shapely.geometry import LineString
 
-from app.routing import Hazard, NoRouteError, RouteMode, find_route, nearest_node, segment_key
+from app.routing import (
+    Hazard,
+    NoRouteError,
+    RouteHazard,
+    RouteMode,
+    find_route,
+    nearest_node,
+    segment_id,
+    segment_key,
+)
 
 
 def hazards_on(u: str, v: str, *hazards: Hazard) -> dict:
@@ -26,7 +35,21 @@ def test_shortest_goes_through_ice_but_reports_it(street_graph):
     route = find_route(street_graph, "A", "D", RouteMode.SHORTEST, hazards)
 
     assert route.nodes == ["A", "B", "D"]
-    assert route.hazards == [ICE]
+    [route_hazard] = route.hazards
+    assert isinstance(route_hazard, RouteHazard)
+    assert route_hazard.location == pytest.approx((42.3500, -71.1074))
+    assert (route_hazard.kind, route_hazard.severity, route_hazard.blocked) == ("ice", 0.9, False)
+
+
+def test_route_hazard_location_is_segment_midpoint_in_either_direction(street_graph):
+    # Reported as D-B, walked B->D.
+    hazards = hazards_on("D", "B", ICE)
+
+    route = find_route(street_graph, "A", "D", RouteMode.SHORTEST, hazards)
+
+    [route_hazard] = route.hazards
+    assert route_hazard.location == pytest.approx((42.3500, -71.1062))
+    assert route_hazard.kind == "ice"
 
 
 def test_safer_detours_around_ice(street_graph):
@@ -106,6 +129,16 @@ def test_nearest_node_snaps_point_and_reports_distance(street_graph):
 
     assert node == "A"
     assert distance_m < 20
+
+
+def test_segment_id_is_the_same_in_both_directions():
+    assert segment_id("A", "B") == segment_id("B", "A") == "A-B"
+
+
+def test_segment_id_sorts_osm_node_ids_as_numbers():
+    # Real graph ids are ints: 9 < 10 numerically, though "10" < "9" as text.
+    assert segment_id(10, 9) == segment_id(9, 10) == "9-10"
+    assert segment_id(61340937, 61326726) == "61326726-61340937"
 
 
 def add_stairs(graph, u: str, v: str, length: float, highway="steps") -> None:

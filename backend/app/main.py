@@ -1,24 +1,36 @@
-"""Lumi API: street routing around Boston University."""
+"""Lumi API: street routing and community reports around Boston University."""
 
+import logging
+import threading
 from contextlib import asynccontextmanager
-from typing import Annotated
+from datetime import UTC, datetime
+from typing import Annotated, Literal
 
 import networkx as nx
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from app.config import FRONTEND_ORIGINS, GRAPH_PATH, MAX_SNAP_DISTANCE_M
-from app.routing import Hazards, NoRouteError, RouteMode, find_route, nearest_node
+from app.config import GRAPH_PATH, MAX_PHOTO_BYTES, MAX_SNAP_DISTANCE_M, NEARBY_RADIUS_M, frontend_origins
+from app.reports import PhotoReviewer, PhotoVerdict, SegmentReports, SegmentStatus, new_report_id
+from app.routing import (
+    Hazards,
+    NoRouteError,
+    RouteHazard,
+    RouteMode,
+    SegmentKey,
+    find_route,
+    nearest_node,
+    segment_key,
+)
+from app.routing import segment_id as make_segment_id
+from app.segments import SegmentIndex
+from app.storage import MemoryReportStore, PostgresReportStore, StoredReport, default_store, new_vote_id, replay
+
+logger = logging.getLogger(__name__)
 
 Latitude = Annotated[float, Query(ge=-90, le=90)]
 Longitude = Annotated[float, Query(ge=-180, le=180)]
-
-
-class HazardOut(BaseModel):
-    kind: str
-    severity: float
-    blocked: bool
 
 
 class RouteOut(BaseModel):
@@ -28,7 +40,40 @@ class RouteOut(BaseModel):
     coordinates: list[tuple[float, float]]  # (lat, lon)
     snapped_start: tuple[float, float]  # (lat, lon) of the intersection the route starts at
     snapped_end: tuple[float, float]  # (lat, lon) of the intersection the route ends at
-    hazards: list[HazardOut]
+    hazards: list[RouteHazard]  # only confirmed reports reach routing; GET /reports lists the rest
+
+
+class ReportOut(BaseModel):
+    report_id: str
+    segment_id: str
+    outcome: Literal["status_changed", "vote_recorded", "unverified", "pending"]
+    segment_status: SegmentStatus
+
+
+class VoteIn(BaseModel):
+    blocked: bool
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+
+
+class VoteOut(BaseModel):
+    outcome: Literal["vote_recorded", "status_changed", "photo_required"]
+    segment_status: SegmentStatus
+
+
+class NearbySegmentOut(BaseModel):
+    segment_id: str
+    status: SegmentStatus
+    coordinates: list[tuple[float, float]]  # (lat, lon) along the segment
+
+
+class ReportListItem(BaseModel):
+    report_id: str
+    segment_id: str
+    location: tuple[float, float]  # (lat, lon) segment midpoint, same as /route hazards
+    verification: PhotoVerdict  # "confirmed", "unverified" or "pending"
+    reported_at: str  # ISO 8601 UTC, e.g. "2026-11-21T18:04:00Z"
+    simulated: bool
 
 
 def load_street_graph() -> nx.DiGraph:
@@ -39,15 +84,88 @@ def load_street_graph() -> nx.DiGraph:
     return ox.convert.to_digraph(ox.load_graphml(GRAPH_PATH), weight="length")
 
 
-def create_app(graph: nx.DiGraph | None = None, hazards: Hazards | None = None) -> FastAPI:
+def unconfigured_reviewer() -> PhotoReviewer:
+    """Stand-in until the real photo agent is wired in: every photo stays pending."""
+    warned = False
+
+    def review(photo: bytes) -> PhotoVerdict:
+        nonlocal warned
+        if not warned:
+            logger.warning("No photo reviewer configured: photo reports stay pending and don't affect routing.")
+            warned = True
+        return PhotoVerdict.UNAVAILABLE
+
+    return review
+
+
+def require_user(x_user_id: Annotated[str | None, Header()] = None) -> str:
+    """Temporary identity until login exists: any stable string the client sends."""
+    user_id = (x_user_id or "").strip()
+    if not user_id:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing X-User-Id header. Send a stable id for this device with every report or vote.",
+        )
+    return user_id
+
+
+UserId = Annotated[str, Depends(require_user)]
+
+
+def create_app(
+    graph: nx.DiGraph | None = None,
+    hazards: Hazards | None = None,
+    review_photo: PhotoReviewer | None = None,
+    store: PostgresReportStore | MemoryReportStore | None = None,
+) -> FastAPI:
+    """`hazards` are fixed extra hazards (tests use them); confirmed reports are added on top.
+
+    `store` defaults to Tiger Data if PGHOST is set, else memory (see app/storage.py).
+    """
+    reviewer = review_photo if review_photo is not None else unconfigured_reviewer()
+    static_hazards = hazards if hazards is not None else {}
+    # Set at startup by `lifespan`; the endpoints below read them.
+    street_graph: nx.DiGraph
+    segments: SegmentIndex
+    reports: SegmentReports
+    report_store: PostgresReportStore | MemoryReportStore  # every write goes here first, then to `reports`
+    # SegmentReports isn't thread-safe and FastAPI runs sync endpoints in a
+    # thread pool, so every read and write of `reports` holds this lock. Writes
+    # also hold it while saving to the store, so stored order = applied order.
+    lock = threading.Lock()
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        app.state.graph = graph if graph is not None else load_street_graph()
-        app.state.hazards = hazards if hazards is not None else {}
-        yield
+        nonlocal street_graph, segments, reports, report_store
+        street_graph = graph if graph is not None else load_street_graph()
+        segments = SegmentIndex(street_graph)
+        reports = SegmentReports(review_photo=reviewer)
+        report_store = store if store is not None else default_store()
+        replayed = replay(report_store.all(), reports, segments)  # stored statuses; never calls the reviewer
+        logger.info("Rebuilt segment status from %d stored reports", replayed)
+        try:
+            yield
+        finally:
+            if store is None:  # we opened it, so we close it
+                report_store.close()
+
+    def save(row: StoredReport) -> None:
+        """Store first: if saving fails, the report isn't applied and the user can retry."""
+        try:
+            report_store.add(row)
+        except Exception as error:
+            logger.exception("Couldn't save report %s", row.report_id)
+            raise HTTPException(
+                status_code=503, detail="Lumi couldn't save your report right now. Please try again."
+            ) from error
 
     app = FastAPI(title="Lumi API", lifespan=lifespan)
-    app.add_middleware(CORSMiddleware, allow_origins=FRONTEND_ORIGINS, allow_methods=["GET"])
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=frontend_origins(),
+        allow_methods=["GET", "POST"],
+        allow_headers=["Content-Type", "X-User-Id"],
+    )
 
     @app.get("/health")
     def health() -> dict:
@@ -55,14 +173,12 @@ def create_app(graph: nx.DiGraph | None = None, hazards: Hazards | None = None) 
 
     @app.get("/route", response_model=RouteOut)
     def route(
-        request: Request,
         start_lat: Latitude,
         start_lon: Longitude,
         end_lat: Latitude,
         end_lon: Longitude,
         mode: RouteMode = RouteMode.SAFER,
     ) -> RouteOut:
-        street_graph = request.app.state.graph
         start = _snap(street_graph, start_lat, start_lon, "Start")
         end = _snap(street_graph, end_lat, end_lon, "Destination")
         if start == end:
@@ -70,8 +186,10 @@ def create_app(graph: nx.DiGraph | None = None, hazards: Hazards | None = None) 
                 status_code=422,
                 detail="Start and destination are too close to route between. Pick points farther apart.",
             )
+        with lock:
+            route_hazards = _merge_hazards(static_hazards, reports.hazards())
         try:
-            result = find_route(street_graph, start, end, mode, request.app.state.hazards)
+            result = find_route(street_graph, start, end, mode, route_hazards)
         except NoRouteError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         return RouteOut(
@@ -81,10 +199,145 @@ def create_app(graph: nx.DiGraph | None = None, hazards: Hazards | None = None) 
             coordinates=result.coordinates,
             snapped_start=_lat_lon(street_graph, start),
             snapped_end=_lat_lon(street_graph, end),
-            hazards=[HazardOut(kind=h.kind, severity=h.severity, blocked=h.blocked) for h in result.hazards],
+            hazards=result.hazards,
         )
 
+    # Sync (not async) so FastAPI runs it in a worker thread: the photo
+    # reviewer can take seconds and must not block the event loop.
+    @app.post("/reports", status_code=201, response_model=ReportOut)
+    def create_report(
+        user_id: UserId,
+        lat: Annotated[float, Form(ge=-90, le=90)],
+        lon: Annotated[float, Form(ge=-180, le=180)],
+        photo: Annotated[UploadFile, File()],
+    ) -> ReportOut:
+        data = photo.file.read(MAX_PHOTO_BYTES + 1)
+        if len(data) > MAX_PHOTO_BYTES:
+            raise HTTPException(status_code=413, detail="The photo is larger than 5 MB. Send a smaller one.")
+        if image_type(data) is None:
+            raise HTTPException(status_code=415, detail="The photo must be a JPEG, PNG or WebP image.")
+        sid, distance_m = segments.nearest(lat, lon)
+        if distance_m > MAX_SNAP_DISTANCE_M:
+            raise HTTPException(
+                status_code=422,
+                detail=f"This spot is outside Lumi's coverage area ({distance_m:.0f} m from the nearest mapped sidewalk).",
+            )
+
+        verdict = _review(reviewer, data)  # outside the lock: it may be slow
+        report_id = new_report_id()
+        segment = _key(segments, sid)
+        with lock:
+            # Timestamped inside the lock, so time order matches the order the rules saw.
+            reported_at = datetime.now(UTC)
+            save(StoredReport(report_id, sid, user_id, lat, lon, True, reported_at, status=verdict, photo=data))
+            outcome = reports.report_blocked_with_photo(
+                segment, user_id, data, reported_at, report_id=report_id, verdict=verdict
+            )
+            status = reports.status(segment)
+        return ReportOut(report_id=report_id, segment_id=sid, outcome=outcome.value, segment_status=status)
+
+    @app.post("/segments/{segment_id}/votes", response_model=VoteOut)
+    def vote(segment_id: str, body: VoteIn, user_id: UserId) -> VoteOut:
+        if segment_id not in segments:
+            raise HTTPException(status_code=404, detail=f"No sidewalk segment with id {segment_id}.")
+        distance_m = segments.distance_m(segment_id, body.lat, body.lon)
+        if distance_m > NEARBY_RADIUS_M:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"You need to be within {NEARBY_RADIUS_M} m of this sidewalk to vote on it "
+                    f"(you're {distance_m:.0f} m away)."
+                ),
+            )
+        segment = _key(segments, segment_id)
+        with lock:
+            now = datetime.now(UTC)
+            if body.blocked and reports.needs_photo(user_id, now):
+                # Refused, so nothing to store: replay would refuse it again anyway.
+                return VoteOut(outcome="photo_required", segment_status=reports.status(segment))
+            save(StoredReport(new_vote_id(), segment_id, user_id, body.lat, body.lon, body.blocked, now))
+            outcome = reports.vote(segment, user_id, body.blocked, now)
+            status = reports.status(segment)
+        return VoteOut(outcome=outcome.value, segment_status=status)
+
+    @app.get("/segments/nearby", response_model=list[NearbySegmentOut])
+    def nearby_segments(lat: Latitude, lon: Longitude) -> list[NearbySegmentOut]:
+        close = segments.within(lat, lon, NEARBY_RADIUS_M)
+        with lock:
+            reported = {_sid(key): reports.status(key) for key in reports.reported_segments()}
+        found = sorted((distance, sid) for sid, distance in close.items() if sid in reported)
+        return [
+            NearbySegmentOut(segment_id=sid, status=reported[sid], coordinates=segments.coordinates(sid))
+            for _, sid in found
+        ]
+
+    @app.get("/reports", response_model=list[ReportListItem])
+    def list_reports() -> list[ReportListItem]:
+        with lock:
+            # A confirmed photo stops being shown once votes reopen its segment:
+            # drawing it would contradict the segment's current status.
+            listed = [
+                r
+                for r in reports.photo_reports()
+                if r.verdict is not PhotoVerdict.CONFIRMED or reports.status(r.segment) is SegmentStatus.BLOCKED
+            ]
+        listed.sort(key=lambda r: r.reported_at, reverse=True)  # newest first
+        return [
+            ReportListItem(
+                report_id=r.report_id,
+                segment_id=sid,
+                location=segments.midpoint(sid),
+                verification=r.verdict,
+                reported_at=_iso_utc(r.reported_at),
+                simulated=False,  # no simulated demo reports yet
+            )
+            for r in listed
+            if (sid := _sid(r.segment)) in segments  # a report off this graph can't be placed on the map
+        ]
+
     return app
+
+
+def image_type(data: bytes) -> str | None:
+    """Media type from the file's first bytes, or None if it isn't JPEG, PNG or WebP.
+
+    The client's filename and Content-Type are ignored: they're easy to get wrong.
+    """
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def _review(review_photo: PhotoReviewer, photo: bytes) -> PhotoVerdict:
+    """A reviewer that crashes counts as unavailable: the report waits as pending."""
+    try:
+        return review_photo(photo)
+    except Exception:
+        logger.exception("Photo reviewer failed; keeping the report pending")
+        return PhotoVerdict.UNAVAILABLE
+
+
+def _key(segments: SegmentIndex, sid: str) -> SegmentKey:
+    return segment_key(*segments.endpoints(sid))
+
+
+def _sid(key: SegmentKey) -> str:
+    return make_segment_id(min(key), max(key))
+
+
+def _merge_hazards(static: Hazards, reported: Hazards) -> Hazards:
+    merged = {segment: list(found) for segment, found in static.items()}
+    for segment, found in reported.items():
+        merged.setdefault(segment, []).extend(found)
+    return merged
+
+
+def _iso_utc(moment: datetime) -> str:
+    return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _snap(graph: nx.DiGraph, lat: float, lon: float, label: str):

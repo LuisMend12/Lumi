@@ -19,9 +19,14 @@ Put these in `backend/.env`, which is gitignored. Never commit keys.
 
 | Variable | Needed for | Required now? |
 |---|---|---|
+| `LUMI_FRONTEND_ORIGINS` | CORS: comma-separated browser origins allowed to call the API | No; defaults to `http://localhost:3000` |
 | `LUMI_MASTRA_URL` | Where the photo-review service runs (`app/photo_review.py`) | No. Default `http://localhost:4111` |
+| `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`, `PGSSLMODE` | Storing reports in Tiger Data (standard libpq names) | No. Without `PGHOST`, reports are kept in memory and lost on restart |
+| `LUMI_TEST_DATABASE_URL` | Running the Postgres store tests against a throwaway TimescaleDB database | No; those tests are skipped |
 
 The Gemini key isn't a backend variable: it goes in `mastra/.env` (see [mastra/README.md](../mastra/README.md)).
+
+To load `.env`, run the server with `uv run --env-file .env uvicorn app.main:app --reload`.
 
 ## Run
 
@@ -70,13 +75,34 @@ The response has these fields:
 - `mode_description`: plain-language text to show the user
 - `distance_m`
 - `coordinates`: a list of `[lat, lon]` pairs in walking order
-- `hazards`: reported hazards on the segments the route still uses
+- `hazards`: reported hazards on the segments the route still uses, each with `location` (segment midpoint), `kind`, `severity` and `blocked`
 
 | Status | Meaning |
 |---|---|
 | 200 | Route found |
 | 404 | No route avoids the blocked sidewalks |
 | 422 | Invalid input, or a point more than 250 m from the nearest mapped intersection |
+
+`hazards` combines confirmed community reports (`app/reports.py`) with any hazards passed to `create_app` in tests.
+
+### Reports
+
+The full shapes are in [docs/team/api-contract.md](../docs/team/api-contract.md). Writes need an `X-User-Id` header (any stable string until login exists); without it they return `401`.
+
+| Endpoint | Success | Errors |
+|---|---|---|
+| `POST /reports` (multipart `lat`, `lon`, `photo`) | `201` with `outcome` `status_changed`, `vote_recorded`, `unverified` or `pending` | `401`, `413` photo over 5 MB, `415` not JPEG/PNG/WebP, `422` more than 250 m from any sidewalk |
+| `POST /segments/{segment_id}/votes` (JSON `blocked`, `lat`, `lon`) | `200` with `outcome` `vote_recorded`, `status_changed` or `photo_required` | `401`, `403` more than 50 m from the segment, `404` unknown segment, `422` |
+| `GET /segments/nearby?lat=&lon=` | `200`: reported segments within 50 m, closest first | `422` |
+| `GET /reports` | `200`: confirmed, unverified and pending photo reports, newest first | |
+
+A report is attached to the closest sidewalk segment, measured to the street's shape rather than to its intersections. No photo reviewer is wired in yet, so outside tests every photo report stays `pending` and doesn't affect routing.
+
+### Storage
+
+Every photo report and counted vote is one row in Tiger Data's `reports` table, a TimescaleDB hypertable on `reported_at`. A photo report's row holds its `status` (`confirmed`, `unverified` or `pending`) and the photo itself; a vote's `status` is empty. Each write is saved before it's applied in memory; if saving fails, the API returns `503` and nothing changes. On startup, `app/storage.py` creates the table if it's missing, then replays the rows oldest first with their stored statuses, so segment status survives a restart and the photo reviewer isn't called again.
+
+The schema is `SCHEMA` in `app/storage.py`. Reports don't expire yet.
 
 ## How routing works
 
@@ -86,7 +112,7 @@ The street graph is loaded once at startup and never modified. Hazards are kept 
 - **Shortest:** cost = length.
 - **Safer / Accessible:** cost = length × (1 + `SAFER_RISK_WEIGHT` × risk). Risk is the highest severity reported on the segment, from 0 to 1.
 
-The hazards dict is empty for now: hazard reports aren't implemented, so all three modes return the same route.
+Hazards come from confirmed community reports, so until someone reports a blockage all three modes return the same route.
 
 ## Layout
 
@@ -94,7 +120,9 @@ The hazards dict is empty for now: hazard reports aren't implemented, so all thr
 app/
   config.py        coverage area, file paths, tuning constants
   routing.py       modes, Hazard, weight function, Dijkstra, point snapping
-  reports.py       report rules: photo review, one-tap votes, 4-user flip, abuse limit (in memory, no endpoints yet)
+  reports.py       report rules: photo review, one-tap votes, 4-user flip, abuse limit (in memory)
+  segments.py      segment lookup by id and nearest segment to a point
+  storage.py       stored reports: Tiger Data and in-memory stores, schema, replay on startup
   main.py          FastAPI app factory (create_app) and endpoints
 scripts/
   build_graph.py   download the OSM walk network -> data/bu_walk.graphml
@@ -110,7 +138,7 @@ tests/             pytest suite on a small synthetic graph
 uv run pytest
 ```
 
-The tests build a tiny fake street network and pass it to `create_app(graph, hazards)`, so they don't load the real map or touch the network.
+The tests build a tiny fake street network and pass it to `create_app(graph, hazards, review_photo, store)` with a fake photo reviewer and an in-memory store, so they don't load the real map, touch the network, call Claude or connect to a database. The Postgres store tests run only when `LUMI_TEST_DATABASE_URL` is set; they drop and recreate the `reports` table, so point it at a throwaway database.
 
 ## Scripts
 

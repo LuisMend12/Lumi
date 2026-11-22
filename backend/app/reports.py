@@ -9,11 +9,12 @@ Rules (team decisions):
 - AI never decides alone: a rejected photo stays "unverified", and a photo the
   agent could not review stays "pending". Neither affects routing.
 
-Everything is in memory for now; storage and login come in later steps.
+Everything is in memory here; storage and login come in later steps.
 """
 
+import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import Enum
 
@@ -29,9 +30,11 @@ class SegmentStatus(str, Enum):
 
 
 class PhotoVerdict(str, Enum):
+    """What the photo agent said. The value is the report's `verification` in GET /reports."""
+
     CONFIRMED = "confirmed"  # agent agrees the photo shows a blocked sidewalk
-    REJECTED = "rejected"  # agent does not see a blocked sidewalk
-    UNAVAILABLE = "unavailable"  # agent failed or timed out
+    REJECTED = "unverified"  # agent does not see a blocked sidewalk
+    UNAVAILABLE = "pending"  # agent failed or timed out; the photo is re-sent later
 
 
 class ReportOutcome(str, Enum):
@@ -45,12 +48,24 @@ class ReportOutcome(str, Enum):
 PhotoReviewer = Callable[[bytes], PhotoVerdict]
 
 
+def new_report_id() -> str:
+    return f"r_{uuid.uuid4().hex[:12]}"
+
+
 @dataclass(frozen=True)
 class PhotoReport:
+    report_id: str
     segment: SegmentKey
     user_id: str
-    photo: bytes
+    photo: bytes  # kept only while pending, so the photo can be re-reviewed
     reported_at: datetime
+    verdict: PhotoVerdict
+
+
+def _drop_photo_once_reviewed(report: PhotoReport) -> PhotoReport:
+    if report.verdict is PhotoVerdict.UNAVAILABLE:
+        return report
+    return replace(report, photo=b"")
 
 
 class SegmentReports:
@@ -62,20 +77,37 @@ class SegmentReports:
         # Latest vote per user since the segment's last status change.
         self._votes: dict[SegmentKey, dict[str, SegmentStatus]] = {}
         self._block_reports: dict[str, list[datetime]] = {}
-        self._unverified: list[PhotoReport] = []
-        self._pending: list[PhotoReport] = []
+        self._photo_reports: list[PhotoReport] = []
 
     def status(self, segment: SegmentKey) -> SegmentStatus:
         return self._status.get(segment, SegmentStatus.OPEN)
 
     def report_blocked_with_photo(
-        self, segment: SegmentKey, user_id: str, photo: bytes, now: datetime
+        self,
+        segment: SegmentKey,
+        user_id: str,
+        photo: bytes,
+        now: datetime,
+        *,
+        report_id: str | None = None,
+        verdict: PhotoVerdict | None = None,
     ) -> ReportOutcome:
+        """Record a photo report. Pass `verdict` when the photo was already
+        reviewed (by the API outside its lock, or when replaying storage);
+        otherwise the reviewer is called here."""
         self._remember_block_report(user_id, now)
-        return self._apply_review(PhotoReport(segment, user_id, photo, now))
+        if verdict is None:
+            verdict = self._review_photo(photo)
+        report = PhotoReport(report_id or new_report_id(), segment, user_id, photo, now, verdict)
+        self._photo_reports.append(_drop_photo_once_reviewed(report))
+        return self._apply(report)
+
+    def needs_photo(self, user_id: str, now: datetime) -> bool:
+        """True if a blocked vote from this user would get PHOTO_REQUIRED."""
+        return self._too_many_block_reports(user_id, now)
 
     def vote(self, segment: SegmentKey, user_id: str, blocked: bool, now: datetime) -> ReportOutcome:
-        if blocked and self._too_many_block_reports(user_id, now):
+        if blocked and self.needs_photo(user_id, now):
             return ReportOutcome.PHOTO_REQUIRED
         if blocked:
             self._remember_block_report(user_id, now)
@@ -91,9 +123,11 @@ class SegmentReports:
 
     def retry_pending(self) -> None:
         """Re-send photos the agent could not review earlier."""
-        waiting, self._pending = self._pending, []
-        for report in waiting:
-            self._apply_review(report)
+        for i, report in enumerate(self._photo_reports):
+            if report.verdict is PhotoVerdict.UNAVAILABLE:
+                report = replace(report, verdict=self._review_photo(report.photo))
+                self._photo_reports[i] = _drop_photo_once_reviewed(report)
+                self._apply(report)
 
     def hazards(self) -> Hazards:
         """Routing input: only confirmed blocked segments."""
@@ -103,20 +137,23 @@ class SegmentReports:
             if status is SegmentStatus.BLOCKED
         }
 
-    def unverified_reports(self) -> list[PhotoReport]:
-        return list(self._unverified)
+    def photo_reports(self) -> list[PhotoReport]:
+        """Every photo report, oldest first; `verdict` says confirmed, unverified or pending."""
+        return list(self._photo_reports)
 
-    def pending_reports(self) -> list[PhotoReport]:
-        return list(self._pending)
+    def reported_segments(self) -> set[SegmentKey]:
+        """Every segment with a status, a current vote or a photo report."""
+        segments = set(self._status)
+        segments.update(segment for segment, votes in self._votes.items() if votes)
+        segments.update(report.segment for report in self._photo_reports)
+        return segments
 
-    def _apply_review(self, report: PhotoReport) -> ReportOutcome:
-        verdict = self._review_photo(report.photo)
-        if verdict is PhotoVerdict.REJECTED:
-            self._unverified.append(report)
-            return ReportOutcome.UNVERIFIED
-        if verdict is PhotoVerdict.UNAVAILABLE:
-            self._pending.append(report)
+    def _apply(self, report: PhotoReport) -> ReportOutcome:
+        """Apply a report's verdict to its segment's status."""
+        if report.verdict is PhotoVerdict.UNAVAILABLE:
             return ReportOutcome.PENDING
+        if report.verdict is PhotoVerdict.REJECTED:
+            return ReportOutcome.UNVERIFIED
         if self.status(report.segment) is SegmentStatus.BLOCKED:
             return ReportOutcome.VOTE_RECORDED
         self._set_status(report.segment, SegmentStatus.BLOCKED)

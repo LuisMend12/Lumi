@@ -45,7 +45,7 @@ def test_rejected_photo_is_kept_as_unverified_and_does_not_block():
 
     assert outcome is ReportOutcome.UNVERIFIED
     assert book.status(AB) is SegmentStatus.OPEN
-    assert [r.segment for r in book.unverified_reports()] == [AB]
+    assert [(r.segment, r.verdict) for r in book.photo_reports()] == [(AB, PhotoVerdict.REJECTED)]
 
 
 def test_agent_outage_keeps_report_pending_and_does_not_block():
@@ -55,7 +55,7 @@ def test_agent_outage_keeps_report_pending_and_does_not_block():
 
     assert outcome is ReportOutcome.PENDING
     assert book.status(AB) is SegmentStatus.OPEN
-    assert [r.segment for r in book.pending_reports()] == [AB]
+    assert [(r.segment, r.verdict) for r in book.photo_reports()] == [(AB, PhotoVerdict.UNAVAILABLE)]
 
 
 def test_retrying_pending_report_blocks_once_agent_confirms():
@@ -66,7 +66,7 @@ def test_retrying_pending_report_blocks_once_agent_confirms():
     book.retry_pending()
 
     assert book.status(AB) is SegmentStatus.BLOCKED
-    assert book.pending_reports() == []
+    assert [r.verdict for r in book.photo_reports()] == [PhotoVerdict.CONFIRMED]
 
 
 # --- One-tap votes ---------------------------------------------------------
@@ -206,3 +206,72 @@ def test_unverified_and_pending_reports_do_not_affect_routing(street_graph):
     route = find_route(street_graph, "A", "D", RouteMode.SHORTEST, book.hazards())
 
     assert route.nodes == ["A", "B", "D"]
+
+
+# --- What the API lists ----------------------------------------------------
+
+
+def test_confirmed_reports_are_kept_with_their_id():
+    book = SegmentReports(review_photo=reviewer(PhotoVerdict.CONFIRMED))
+
+    book.report_blocked_with_photo(AB, "alice", PHOTO, T0, report_id="r_1")
+
+    [report] = book.photo_reports()
+    assert (report.report_id, report.segment, report.user_id) == ("r_1", AB, "alice")
+    assert report.verdict is PhotoVerdict.CONFIRMED
+    assert report.reported_at == T0
+    assert report.photo == b""  # reviewed, so the photo isn't kept in memory
+
+
+def test_report_gets_an_id_when_none_is_given():
+    book = SegmentReports(review_photo=reviewer(PhotoVerdict.REJECTED))
+
+    book.report_blocked_with_photo(AB, "alice", PHOTO, T0)
+
+    [report] = book.photo_reports()
+    assert report.report_id.startswith("r_")
+
+
+def test_retried_report_moves_from_pending_to_confirmed():
+    verdicts = iter([PhotoVerdict.UNAVAILABLE, PhotoVerdict.CONFIRMED])
+    book = SegmentReports(review_photo=lambda photo: next(verdicts))
+    book.report_blocked_with_photo(AB, "alice", PHOTO, T0, report_id="r_1")
+    assert book.photo_reports()[0].photo == PHOTO  # pending keeps the photo to re-send it
+
+    book.retry_pending()
+
+    assert [(r.report_id, r.verdict, r.photo) for r in book.photo_reports()] == [("r_1", PhotoVerdict.CONFIRMED, b"")]
+
+
+def test_known_verdict_skips_the_reviewer():
+    def no_reviewer(photo):
+        raise AssertionError("reviewer must not be called")
+
+    book = SegmentReports(review_photo=no_reviewer)
+
+    outcome = book.report_blocked_with_photo(AB, "alice", PHOTO, T0, verdict=PhotoVerdict.CONFIRMED)
+
+    assert outcome is ReportOutcome.STATUS_CHANGED
+    assert book.status(AB) is SegmentStatus.BLOCKED
+
+
+def test_reported_segments_include_votes_and_every_kind_of_photo_report():
+    verdicts = iter([PhotoVerdict.CONFIRMED, PhotoVerdict.REJECTED, PhotoVerdict.UNAVAILABLE])
+    book = SegmentReports(review_photo=lambda photo: next(verdicts))
+    for other in ["s1", "s2", "s3"]:
+        book.report_blocked_with_photo(segment_key("X", other), "alice", PHOTO, T0)
+    book.vote(AB, "bob", blocked=True, now=T0)
+
+    assert book.reported_segments() == {segment_key("X", s) for s in ["s1", "s2", "s3"]} | {AB}
+
+
+def test_user_needs_photo_matches_the_vote_rule():
+    book = SegmentReports(review_photo=reviewer(PhotoVerdict.CONFIRMED))
+    for other in ["s1", "s2"]:
+        book.vote(segment_key("X", other), "busy", blocked=True, now=T0)
+    assert not book.needs_photo("busy", T0)
+
+    book.vote(segment_key("X", "s3"), "busy", blocked=True, now=T0)
+
+    assert book.needs_photo("busy", T0)
+    assert not book.needs_photo("busy", T0 + timedelta(hours=25))
