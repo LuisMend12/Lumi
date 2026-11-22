@@ -4,12 +4,14 @@ import { Show, SignInButton, UserButton, useAuth, useClerk } from "@clerk/nextjs
 import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
 import DemoPanel from "@/components/DemoPanel";
+import MapLegend from "@/components/MapLegend";
 import NearbyPrompt from "@/components/NearbyPrompt";
 import ReportSheet from "@/components/ReportSheet";
+import RouteControls from "@/components/RouteControls";
 import { fetchRoute, ROUTE_MODES, USE_MOCKS, type LatLon, type RouteMode, type RouteOutcome } from "@/lib/api";
 import { isDemoMode } from "@/lib/demo-api";
 import { getLocation } from "@/lib/device";
-import { ACCESSIBLE_LIMITATION, MODE_STYLES, walkingMinutes } from "@/lib/modes";
+import { ACCESSIBLE_LIMITATION, MODE_STYLES, MODE_SUMMARIES, walkingMinutes } from "@/lib/modes";
 import { VOTE_OUTCOME_TEXT } from "@/lib/reporting";
 import {
   fetchNearby,
@@ -50,6 +52,8 @@ export default function Home() {
   const [isDemo, setIsDemo] = useState(false);
   // Nearby checks read location, so they start only after the visitor asks (#65).
   const [isNearbyOn, setIsNearbyOn] = useState(false);
+  // Which point the next map tap moves once a route exists; taps are ignored otherwise (#66).
+  const [editing, setEditing] = useState<"start" | "end" | null>(null);
 
   // Reports to draw on the map, loaded once on open.
   useEffect(() => {
@@ -169,14 +173,28 @@ export default function Home() {
   }, []);
 
   async function handleMapClick(point: LatLon) {
-    if (!start || end) {
+    if (!start) {
       setPoints(point, null);
-      setOutcomes({});
-      setIsLoading(false);
       return;
     }
-    setPoints(start, point);
-    await loadRoutes(start, point);
+    if (!end) {
+      setPoints(start, point);
+      await loadRoutes(start, point);
+      return;
+    }
+    // A finished route only changes on purpose: Change start / Change end / New route (#66).
+    if (!editing) return;
+    const [nextStart, nextEnd] = editing === "start" ? [point, end] : [start, point];
+    setEditing(null);
+    setPoints(nextStart, nextEnd);
+    await loadRoutes(nextStart, nextEnd);
+  }
+
+  function startNewRoute() {
+    setEditing(null);
+    setPoints(null, null);
+    setOutcomes({});
+    setIsLoading(false);
   }
 
   async function handleVote(blocked: boolean) {
@@ -223,7 +241,13 @@ export default function Home() {
 
   const promptSegment = isNearbyOn && nearby && nearby.segment_id !== dismissedSegment ? nearby : null;
 
-  const hint = !start ? "Tap the map to set your start." : !end ? "Now tap your destination." : null;
+  const hint = !start
+    ? "Tap the map to set your start (A)."
+    : !end
+      ? "Now tap your destination (B)."
+      : editing
+        ? `Tap the map to move ${editing === "start" ? "the start (A)" : "the destination (B)"}.`
+        : null;
   const sharedError = sameErrorForAllModes(outcomes);
   const selectedOutcome = outcomes[selectedMode];
   const selectedRoute = selectedOutcome?.status === "ok" ? selectedOutcome.route : null;
@@ -234,13 +258,13 @@ export default function Home() {
         <header className="flex items-start justify-between gap-3">
           <div>
             <h1 className="text-3xl font-semibold tracking-tight text-[var(--navy)]">Lumi</h1>
-            <p className="text-sm text-[var(--muted)]">Smarter paths. Safer winters.</p>
+            <p className="text-sm text-[var(--muted)]">Winter walking routes around BU, shaped by what people report.</p>
           </div>
           <Show when="signed-out">
             <SignInButton mode="modal">
               <button
                 type="button"
-                className="rounded-full border-2 border-[var(--navy)] px-4 py-1.5 text-sm font-semibold text-[var(--navy)] hover:bg-[var(--ice)]"
+                className="shrink-0 whitespace-nowrap rounded-full border-2 border-[var(--navy)] px-4 py-1.5 text-sm font-semibold text-[var(--navy)] hover:bg-[var(--ice)]"
               >
                 Sign in
               </button>
@@ -257,6 +281,14 @@ export default function Home() {
           </p>
         )}
         {hint && <p className="rounded-lg bg-[var(--ice)] px-3 py-2 text-sm text-[var(--navy)]">{hint}</p>}
+        {start && (
+          <RouteControls
+            hasEnd={Boolean(end)}
+            editing={editing}
+            onEdit={setEditing}
+            onNewRoute={startNewRoute}
+          />
+        )}
         <NearbyToggle
           isOn={isNearbyOn}
           notice={locationNotice}
@@ -289,6 +321,8 @@ export default function Home() {
             ))}
           </ul>
         )}
+
+        <MapLegend />
 
         {isDemo && <DemoPanel route={selectedRoute} onChanged={() => refreshAfterChange()} />}
 
@@ -403,6 +437,7 @@ function ModeCard({ mode, outcome, isSelected, onSelect }: ModeCardProps) {
           <span className="font-semibold text-[var(--navy)]">{style.label}</span>
           <span className="ml-auto text-sm text-[var(--muted)]">{summary}</span>
         </span>
+        <span className="mt-1 block text-xs text-[var(--muted)]">{MODE_SUMMARIES[mode]}</span>
         {mode === "accessible" && (
           <span className="mt-1 block text-xs font-medium text-amber-800">{ACCESSIBLE_LIMITATION}</span>
         )}

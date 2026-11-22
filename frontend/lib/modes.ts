@@ -22,6 +22,13 @@ export const MODE_STYLES: Record<RouteMode, ModeStyle> = {
   accessible: { label: "Accessible", color: "#7c3aed", dashArray: "12 8" },
 };
 
+// One line per mode, shown on every card so no mode reads as a safety promise (#66).
+export const MODE_SUMMARIES: Record<RouteMode, string> = {
+  shortest: "Most direct walk. May pass reported snow or ice.",
+  safer: "Detours around reported snow, ice, and blocked sidewalks when it can.",
+  accessible: "Avoids stairs and reported hazards.",
+};
+
 export const ACCESSIBLE_LIMITATION = "No curb-ramp or slope data yet. Check the route before relying on it.";
 
 interface VerificationStyle {
