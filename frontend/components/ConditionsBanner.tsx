@@ -33,7 +33,7 @@ export default function ConditionsBanner() {
   ].filter((part): part is string => Boolean(part));
 
   return (
-    <section aria-label="Boston weather now" className="font-display overflow-hidden rounded-lg bg-[var(--navy)] text-white">
+    <section aria-label="Boston weather now" className="font-display shrink-0 overflow-hidden rounded-lg bg-[var(--navy)] text-white">
       <div className="flex items-stretch">
         <span className="flex shrink-0 items-center bg-[var(--sky)] px-2.5 text-[13px] font-extrabold tracking-[0.12em] text-[var(--navy)] uppercase">
           Boston now

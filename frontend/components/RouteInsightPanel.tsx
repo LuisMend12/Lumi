@@ -15,7 +15,7 @@ export default function RouteInsightPanel({ outcomes, selectedMode }: Props) {
   return (
     <section
       aria-label="About this route"
-      className="rounded-lg border-l-4 border-[var(--storm)] bg-[var(--ice)] px-3 py-2.5 text-sm text-[var(--navy)]"
+      className="shrink-0 rounded-lg border-l-4 border-[var(--storm)] bg-[var(--ice)] px-3 py-2.5 text-sm text-[var(--navy)]"
     >
       {insight.comparison && <p className="font-semibold">{insight.comparison}</p>}
       {count === 0 ? (

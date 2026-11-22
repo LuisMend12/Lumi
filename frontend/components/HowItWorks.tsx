@@ -10,7 +10,7 @@ type Props = { onDismiss: () => void };
 // A short first-visit explainer. It sits in the panel, never over the map, and stays dismissed.
 export default function HowItWorks({ onDismiss }: Props) {
   return (
-    <section aria-labelledby="how-it-works" className="rounded-lg border-2 border-[var(--frost)] bg-white p-3">
+    <section aria-labelledby="how-it-works" className="shrink-0 rounded-lg border-2 border-[var(--frost)] bg-white p-3">
       <div className="flex items-center justify-between gap-2">
         <h2 id="how-it-works" className="font-display text-[17px] font-bold tracking-[0.06em] text-[var(--navy)] uppercase">
           How Lumi works
