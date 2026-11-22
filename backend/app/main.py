@@ -2,13 +2,16 @@
 
 import logging
 import threading
+from collections.abc import Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
 import networkx as nx
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.config import GRAPH_PATH, MAX_PHOTO_BYTES, MAX_SNAP_DISTANCE_M, NEARBY_RADIUS_M, frontend_origins
@@ -167,6 +170,11 @@ def create_app(
         allow_headers=["Content-Type", "X-User-Id"],
     )
 
+    @app.exception_handler(RequestValidationError)
+    async def readable_validation_error(request: Request, error: RequestValidationError) -> JSONResponse:
+        """The API contract promises `detail` is a string, so join FastAPI's error list into one."""
+        return JSONResponse(status_code=422, content={"detail": validation_message(error.errors())})
+
     @app.get("/health")
     def health() -> dict:
         return {"status": "ok"}
@@ -296,6 +304,19 @@ def create_app(
         ]
 
     return app
+
+
+_REQUEST_PARTS = {"query", "body", "path", "header", "form"}
+
+
+def validation_message(errors: Sequence[dict]) -> str:
+    """e.g. "start_lat: Input should be less than or equal to 90; start_lon: Field required"."""
+    parts = []
+    for error in errors:
+        field = ".".join(str(part) for part in error.get("loc", ()) if part not in _REQUEST_PARTS)
+        message = error.get("msg", "Invalid value")
+        parts.append(f"{field}: {message}" if field else message)
+    return "; ".join(parts) or "Invalid request."
 
 
 def image_type(data: bytes) -> str | None:
