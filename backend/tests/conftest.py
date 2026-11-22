@@ -12,6 +12,8 @@ Every street is walkable in both directions, like a real sidewalk graph.
 import networkx as nx
 import pytest
 
+from app.auth import InvalidToken
+
 # Node id -> (lat, lon). Spread a few hundred meters apart near Marsh Plaza.
 NODES = {
     "A": (42.3500, -71.1080),
@@ -32,6 +34,26 @@ def street_graph() -> nx.DiGraph:
         graph.add_edge(u, v, length=length)
         graph.add_edge(v, u, length=length)
     return graph
+
+
+TEST_TOKEN_PREFIX = "test-user:"
+
+
+def fake_verifier(token: str) -> str:
+    """Stands in for Clerk: "test-user:<id>" is a valid token for <id>. Real checks: test_auth.py."""
+    if token.startswith(TEST_TOKEN_PREFIX) and token.removeprefix(TEST_TOKEN_PREFIX).strip():
+        return token.removeprefix(TEST_TOKEN_PREFIX)
+    raise InvalidToken("not a test token")
+
+
+def auth_header(user: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {TEST_TOKEN_PREFIX}{user}"}
+
+
+@pytest.fixture(autouse=True)
+def fake_clerk(monkeypatch):
+    """create_app() builds its token verifier from CLERK_* settings; use the fake one instead."""
+    monkeypatch.setattr("app.main.clerk_verifier_from_env", lambda origins: fake_verifier)
 
 
 @pytest.fixture(autouse=True)

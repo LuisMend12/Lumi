@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from app.main import create_app
+from tests.conftest import auth_header
 from app.routing import Hazard, segment_key
 
 
@@ -99,7 +100,7 @@ def test_validation_errors_for_several_fields_are_joined(client):
 
 def test_invalid_vote_body_detail_is_a_string(client):
     response = client.post(
-        "/segments/A-B/votes", json={"blocked": True, "lat": 999, "lon": -71.1}, headers={"X-User-Id": "alice"}
+        "/segments/A-B/votes", json={"blocked": True, "lat": 999, "lon": -71.1}, headers=auth_header("alice")
     )
 
     assert response.status_code == 422
