@@ -8,9 +8,12 @@ import MapLegend from "@/components/MapLegend";
 import NearbyPrompt from "@/components/NearbyPrompt";
 import ReportSheet from "@/components/ReportSheet";
 import RouteControls from "@/components/RouteControls";
+import RoutePicker, { MAP_POINT, MY_LOCATION } from "@/components/RoutePicker";
 import { fetchRoute, ROUTE_MODES, USE_MOCKS, type LatLon, type RouteMode, type RouteOutcome } from "@/lib/api";
 import { isDemoMode } from "@/lib/demo-api";
+import { LANDMARKS } from "@/lib/landmarks";
 import { getLocation } from "@/lib/device";
+import { createRequestTracker } from "@/lib/latest";
 import { ACCESSIBLE_LIMITATION, MODE_STYLES, MODE_SUMMARIES, walkingMinutes } from "@/lib/modes";
 import { VOTE_OUTCOME_TEXT } from "@/lib/reporting";
 import {
@@ -54,6 +57,14 @@ export default function Home() {
   const [isNearbyOn, setIsNearbyOn] = useState(false);
   // Which point the next map tap moves once a route exists; taps are ignored otherwise (#66).
   const [editing, setEditing] = useState<"start" | "end" | null>(null);
+  // What the From / To pickers show: a landmark id, MY_LOCATION, MAP_POINT, or "" (#67).
+  const [fromChoice, setFromChoice] = useState("");
+  const [toChoice, setToChoice] = useState("");
+  const [isLocating, setIsLocating] = useState(false);
+  const [pickerError, setPickerError] = useState<string | null>(null);
+  // A My location lookup can take seconds. Any newer start (another choice, a map tap,
+  // New route) wins, so a late GPS result or error can't override it (#67).
+  const [startChoice] = useState(createRequestTracker);
 
   // Reports to draw on the map, loaded once on open.
   useEffect(() => {
@@ -172,29 +183,90 @@ export default function Home() {
     };
   }, []);
 
+  // Set either point from the map, a picker, or My location; routes load once both exist.
+  async function applyPoints(nextStart: LatLon | null, nextEnd: LatLon | null) {
+    setEditing(null);
+    setPickerError(null);
+    setPoints(nextStart, nextEnd);
+    if (nextStart && nextEnd) {
+      await loadRoutes(nextStart, nextEnd);
+    } else {
+      setOutcomes({});
+      setIsLoading(false);
+    }
+  }
+
   async function handleMapClick(point: LatLon) {
-    if (!start) {
-      setPoints(point, null);
+    const { start: current, end: currentEnd } = pointsRef.current;
+    if (!current) {
+      supersedeStartChoice();
+      setFromChoice(MAP_POINT);
+      await applyPoints(point, currentEnd);
       return;
     }
-    if (!end) {
-      setPoints(start, point);
-      await loadRoutes(start, point);
+    if (!currentEnd) {
+      setToChoice(MAP_POINT);
+      await applyPoints(current, point);
       return;
     }
     // A finished route only changes on purpose: Change start / Change end / New route (#66).
-    if (!editing) return;
-    const [nextStart, nextEnd] = editing === "start" ? [point, end] : [start, point];
-    setEditing(null);
-    setPoints(nextStart, nextEnd);
-    await loadRoutes(nextStart, nextEnd);
+    if (editing === "start") {
+      supersedeStartChoice();
+      setFromChoice(MAP_POINT);
+      await applyPoints(point, currentEnd);
+    } else if (editing === "end") {
+      setToChoice(MAP_POINT);
+      await applyPoints(current, point);
+    }
+  }
+
+  // A picker choice becomes a point: a landmark, or My location (read only on this tap).
+  async function pointForChoice(choice: string, isCurrent: () => boolean = () => true): Promise<LatLon | null> {
+    if (choice === MY_LOCATION) {
+      setIsLocating(true);
+      try {
+        const location = await getLocation();
+        setIsNearbyOn(true); // the visitor just shared their location (#65)
+        return location;
+      } finally {
+        if (isCurrent()) setIsLocating(false);
+      }
+    }
+    return LANDMARKS.find((landmark) => landmark.id === choice)?.point ?? null;
+  }
+
+  // Any lookup for the start still in flight is now stale.
+  function supersedeStartChoice() {
+    startChoice.cancel();
+    setIsLocating(false);
+  }
+
+  async function handleFromChange(choice: string) {
+    const previous = fromChoice;
+    setIsLocating(false);
+    const isCurrent = startChoice.begin();
+    setFromChoice(choice);
+    try {
+      const point = await pointForChoice(choice, isCurrent);
+      if (!isCurrent()) return; // a newer start was picked while we waited for the location
+      await applyPoints(point, pointsRef.current.end);
+    } catch (error: unknown) {
+      if (!isCurrent()) return;
+      setFromChoice(previous);
+      setPickerError(error instanceof Error ? error.message : "Couldn't get your location.");
+    }
+  }
+
+  async function handleToChange(choice: string) {
+    setToChoice(choice);
+    await applyPoints(pointsRef.current.start, await pointForChoice(choice));
   }
 
   function startNewRoute() {
-    setEditing(null);
-    setPoints(null, null);
-    setOutcomes({});
-    setIsLoading(false);
+    supersedeStartChoice();
+    setFromChoice("");
+    setToChoice("");
+    void applyPoints(null, null);
   }
 
   async function handleVote(blocked: boolean) {
@@ -242,9 +314,9 @@ export default function Home() {
   const promptSegment = isNearbyOn && nearby && nearby.segment_id !== dismissedSegment ? nearby : null;
 
   const hint = !start
-    ? "Tap the map to set your start (A)."
+    ? "Pick a start above, or tap the map (A)."
     : !end
-      ? "Now tap your destination (B)."
+      ? "Pick a destination, or tap the map (B)."
       : editing
         ? `Tap the map to move ${editing === "start" ? "the start (A)" : "the destination (B)"}.`
         : null;
@@ -280,10 +352,22 @@ export default function Home() {
             Mock data: routes and hazards are simulated, not real reports.
           </p>
         )}
+        <RoutePicker
+          from={fromChoice}
+          to={toChoice}
+          isLocating={isLocating}
+          onFromChange={handleFromChange}
+          onToChange={handleToChange}
+        />
+        {pickerError && (
+          <p role="alert" className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900">
+            {pickerError}
+          </p>
+        )}
         {hint && <p className="rounded-lg bg-[var(--ice)] px-3 py-2 text-sm text-[var(--navy)]">{hint}</p>}
-        {start && (
+        {(start || end) && (
           <RouteControls
-            hasEnd={Boolean(end)}
+            hasEnd={Boolean(start && end)}
             editing={editing}
             onEdit={setEditing}
             onNewRoute={startNewRoute}

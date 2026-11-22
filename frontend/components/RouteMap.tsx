@@ -96,7 +96,7 @@ export default function RouteMap({
   const selectedRoute = selected?.status === "ok" ? selected.route : null;
 
   return (
-    <MapContainer center={AREA_CENTER} zoom={15} className="h-full w-full" zoomControl={false}>
+    <MapContainer center={AREA_CENTER} zoom={15} className="h-full w-full">
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
