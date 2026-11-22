@@ -159,3 +159,64 @@ def test_route_hazard_has_location_kind_severity_and_blocked(street_graph):
         "severity": 0.6,
         "blocked": False,
     }
+
+
+# --- Accessible step-free snapping (#33) ----------------------------------------
+
+def stairs_only_spot(street_graph, lat: float, lon: float) -> None:
+    """Spot E, reachable from A only by a staircase."""
+    street_graph.add_node("E", y=lat, x=lon)
+    for u, v in [("A", "E"), ("E", "A")]:
+        street_graph.add_edge(u, v, length=30.0, highway="steps")
+
+
+E_TO_D = {"start_lat": 42.35025, "start_lon": -71.1080, "end_lat": 42.3500, "end_lon": -71.1056}
+
+
+def test_accessible_start_reachable_only_by_stairs_snaps_and_says_so(street_graph):
+    stairs_only_spot(street_graph, 42.35025, -71.1080)  # ~28 m north of A
+    with TestClient(create_app(graph=street_graph)) as client:
+        response = client.get("/route", params={**E_TO_D, "mode": "accessible"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["snapped_start"] == [42.3500, -71.1080]  # A, not E
+    assert body["notice"] == "Your start is only reachable by stairs, so the step-free route starts 28 m away."
+
+
+def test_accessible_destination_reachable_only_by_stairs_snaps_and_says_so(street_graph):
+    stairs_only_spot(street_graph, 42.35025, -71.1080)
+    d_to_e = {"start_lat": 42.3500, "start_lon": -71.1056, "end_lat": 42.35025, "end_lon": -71.1080}
+    with TestClient(create_app(graph=street_graph)) as client:
+        body = client.get("/route", params={**d_to_e, "mode": "accessible"}).json()
+
+    assert body["snapped_end"] == [42.3500, -71.1080]
+    assert body["notice"] == "Your destination is only reachable by stairs, so the step-free route ends 28 m away."
+
+
+def test_accessible_does_not_snap_farther_than_100_m(street_graph):
+    stairs_only_spot(street_graph, 42.3515, -71.1080)  # ~167 m north of A
+    far = {**E_TO_D, "start_lat": 42.3515}
+    with TestClient(create_app(graph=street_graph)) as client:
+        response = client.get("/route", params={**far, "mode": "accessible"})
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == (
+        "No step-free route found: your start is only reachable by stairs, "
+        "and the nearest step-free point is 167 m away."
+    )
+
+
+def test_shortest_uses_stairs_and_does_not_snap(street_graph):
+    stairs_only_spot(street_graph, 42.35025, -71.1080)
+    with TestClient(create_app(graph=street_graph)) as client:
+        body = client.get("/route", params={**E_TO_D, "mode": "shortest"}).json()
+
+    assert body["snapped_start"] == [42.35025, -71.1080]  # E itself
+    assert body["notice"] is None
+
+
+def test_accessible_route_without_stairs_has_no_notice(client):
+    body = client.get("/route", params={**A_TO_D, "mode": "accessible"}).json()
+
+    assert body["notice"] is None

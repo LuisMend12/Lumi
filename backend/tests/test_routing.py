@@ -8,8 +8,10 @@ from app.routing import (
     RouteMode,
     find_route,
     nearest_node,
+    nearest_step_free,
     segment_id,
     segment_key,
+    step_free_network,
 )
 
 
@@ -216,3 +218,35 @@ def test_no_route_message_is_readable_and_has_no_node_ids(street_graph):
         find_route(street_graph, "A", "D", RouteMode.SAFER, hazards)
 
     assert str(raised.value) == "No route found: every way between these points uses a blocked sidewalk."
+
+
+# --- Step-free snapping (#33) ---------------------------------------------------
+
+def add_stairs_only_spot(graph, node: str, lat: float, lon: float, via: str = "A") -> None:
+    """A spot reachable only by a staircase from `via`, like GSU's plaza in the real map."""
+    graph.add_node(node, y=lat, x=lon)
+    add_stairs(graph, via, node, 30.0)
+
+
+def test_step_free_network_excludes_spots_reached_only_by_stairs(street_graph):
+    add_stairs_only_spot(street_graph, "E", 42.35025, -71.1080)
+
+    network = step_free_network(street_graph)
+
+    assert network == {"A", "B", "C", "D"}
+
+
+def test_spot_in_the_step_free_network_needs_no_snap(street_graph):
+    network = step_free_network(street_graph)
+
+    assert nearest_step_free(street_graph, "A", network) == ("A", 0.0)
+
+
+def test_stairs_only_spot_snaps_to_the_nearest_step_free_point(street_graph):
+    add_stairs_only_spot(street_graph, "E", 42.35025, -71.1080)  # about 28 m north of A
+    network = step_free_network(street_graph)
+
+    node, distance_m = nearest_step_free(street_graph, "E", network)
+
+    assert node == "A"
+    assert 25 < distance_m < 31
