@@ -55,12 +55,14 @@ type Props = { reports: Report[] };
 
 // The signature move: sidewalk reports crawl along the map's bottom edge like a
 // storm-coverage ticker (#68). It only moves when the reports are wider than the
-// strip, so a short list sits still instead of looping duplicates. Hover pauses
-// it; reduced motion holds it still and lets the strip scroll by hand.
+// strip, so a short list sits still instead of looping duplicates. Hover or the
+// Pause button stops it (WCAG 2.2.2: moving content needs a way to pause it, and
+// phones have no hover); reduced motion holds it still and lets the strip scroll by hand.
 export default function ReportCrawl({ reports }: Props) {
   const stripRef = useRef<HTMLDivElement>(null);
   const firstCopyRef = useRef<HTMLDivElement>(null);
   const [isOverflowing, setIsOverflowing] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
 
   useEffect(() => {
     const strip = stripRef.current;
@@ -82,11 +84,32 @@ export default function ReportCrawl({ reports }: Props) {
       <span className="flex shrink-0 items-center bg-[var(--sky)] px-3 text-[15px] font-extrabold tracking-[0.14em] text-[var(--navy)]">
         LIVE
       </span>
+      {isOverflowing && (
+        <button
+          type="button"
+          onClick={() => setIsPaused((paused) => !paused)}
+          aria-pressed={isPaused}
+          aria-label={isPaused ? "Play the report crawl" : "Pause the report crawl"}
+          title={isPaused ? "Play" : "Pause"}
+          className="flex w-10 shrink-0 items-center justify-center border-r border-white/15 text-white hover:bg-[var(--storm)] focus-visible:outline-[var(--sky)] focus-visible:outline-offset-[-3px]"
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
+            {isPaused ? (
+              <path d="M3.5 2v10l8.5-5z" fill="currentColor" />
+            ) : (
+              <path d="M3.5 2h2.5v10H3.5zM8 2h2.5v10H8z" fill="currentColor" />
+            )}
+          </svg>
+        </button>
+      )}
       {reports.length === 0 ? (
         <p className="flex items-center px-4">No sidewalk reports right now.</p>
       ) : (
         <div ref={stripRef} className="lumi-crawl-strip min-w-0 flex-1 overflow-hidden">
-          <div className={`flex h-full w-max items-center whitespace-nowrap ${isOverflowing ? "lumi-crawl" : ""}`}>
+          <div
+            className={`flex h-full w-max items-center whitespace-nowrap ${isOverflowing ? "lumi-crawl" : ""}`}
+            style={isPaused ? { animationPlayState: "paused" } : undefined}
+          >
             <div ref={firstCopyRef} className="flex items-center pl-4">
               <Items reports={reports} />
             </div>
