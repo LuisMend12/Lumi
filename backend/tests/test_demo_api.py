@@ -147,3 +147,13 @@ def test_nearest_segment_outside_coverage_is_422(demo):
     response = demo.get("/demo/segments/nearest", params={"lat": 42.3601, "lon": -71.0589})  # downtown
 
     assert response.status_code == 422
+
+
+def test_votes_cast_counts_only_votes_actually_saved(demo):
+    # sim-1 reports 3 other sidewalks blocked, so the abuse limit refuses its 4th "blocked".
+    for other in ["B-D", "A-C", "C-D"]:
+        demo.post(f"/demo/segments/{other}/votes", json={"blocked": True, "voters": 1})
+
+    response = demo.post(f"/demo/segments/{SEGMENT}/votes", json={"blocked": True, "voters": 2})
+
+    assert response.json()["votes_cast"] == 1  # sim-1 refused, sim-2 counted
