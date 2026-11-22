@@ -35,7 +35,6 @@ export interface Report {
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; message: string };
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
-const USER_ID_KEY = "lumi-user-id";
 const OFFLINE_MESSAGE = "Can't reach the Lumi server. Check your connection and try again.";
 
 const STATUS_MESSAGES: Record<number, string> = {
@@ -46,33 +45,28 @@ const STATUS_MESSAGES: Record<number, string> = {
   422: "That spot is outside Lumi's coverage area.",
 };
 
-// Temporary stand-in for login (#14): a random ID kept in this browser.
-export function userId(): string {
-  try {
-    const existing = localStorage.getItem(USER_ID_KEY);
-    if (existing) return existing;
-    const created = crypto.randomUUID();
-    localStorage.setItem(USER_ID_KEY, created);
-    return created;
-  } catch {
-    return "anonymous";
-  }
-}
-
-export async function submitReport(location: LatLon, photo: Blob): Promise<ApiResult<ReportResult>> {
+// Writes need the signed-in Clerk user's ID (#14). For now it goes in the
+// X-User-Id header the backend reads today. Once the backend verifies Clerk
+// tokens, send `Authorization: Bearer <getToken()>` here instead.
+export async function submitReport(userId: string, location: LatLon, photo: Blob): Promise<ApiResult<ReportResult>> {
   if (USE_MOCKS) return (await import("./mocks")).mockSubmitReport(location);
   const form = new FormData();
   form.append("lat", String(location[0]));
   form.append("lon", String(location[1]));
   form.append("photo", photo, "report.jpg");
-  return request<ReportResult>("/reports", { method: "POST", body: form });
+  return request<ReportResult>("/reports", { method: "POST", body: form, headers: { "X-User-Id": userId } });
 }
 
-export async function voteOnSegment(segmentId: string, blocked: boolean, location: LatLon): Promise<ApiResult<VoteResult>> {
+export async function voteOnSegment(
+  userId: string,
+  segmentId: string,
+  blocked: boolean,
+  location: LatLon,
+): Promise<ApiResult<VoteResult>> {
   if (USE_MOCKS) return (await import("./mocks")).mockVote();
   return request<VoteResult>(`/segments/${encodeURIComponent(segmentId)}/votes`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-User-Id": userId },
     body: JSON.stringify({ blocked, lat: location[0], lon: location[1] }),
   });
 }
@@ -88,9 +82,8 @@ export async function fetchReports(): Promise<ApiResult<Report[]>> {
 }
 
 async function request<T>(path: string, init: RequestInit): Promise<ApiResult<T>> {
-  const headers = { ...(init.headers as Record<string, string> | undefined), "X-User-Id": userId() };
   try {
-    const response = await fetch(`${API_URL}${path}`, { ...init, headers });
+    const response = await fetch(`${API_URL}${path}`, init);
     const body: unknown = await response.json().catch(() => null);
     if (response.ok) return { ok: true, data: body as T };
     return { ok: false, message: errorMessage(response.status, body) };

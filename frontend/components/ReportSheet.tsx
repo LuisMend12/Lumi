@@ -6,6 +6,7 @@ import { REPORT_OUTCOME_TEXT } from "@/lib/reporting";
 import { submitReport, type ReportResult } from "@/lib/reports-api";
 
 type Props = {
+  userId: string; // signed-in Clerk user; the page asks for sign-in before opening the sheet
   notice: string | null; // e.g. why a photo is required
   onClose: () => void;
   onReported: (result: ReportResult) => void;
@@ -13,7 +14,7 @@ type Props = {
 
 type Stage = { kind: "editing" } | { kind: "sending" } | { kind: "done"; message: string } | { kind: "error"; message: string };
 
-export default function ReportSheet({ notice, onClose, onReported }: Props) {
+export default function ReportSheet({ userId, notice, onClose, onReported }: Props) {
   const [photo, setPhoto] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [stage, setStage] = useState<Stage>({ kind: "editing" });
@@ -31,7 +32,7 @@ export default function ReportSheet({ notice, onClose, onReported }: Props) {
     setStage({ kind: "sending" });
     try {
       const [location, shrunk] = await Promise.all([getLocation(), shrinkPhoto(photo)]);
-      const result = await submitReport(location, shrunk);
+      const result = await submitReport(userId, location, shrunk);
       if (!result.ok) return setStage({ kind: "error", message: result.message });
       setStage({ kind: "done", message: REPORT_OUTCOME_TEXT[result.data.outcome] });
       onReported(result.data);
