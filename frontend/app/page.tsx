@@ -3,12 +3,16 @@
 import { SignInButton, SignedIn, SignedOut, UserButton, useAuth, useClerk } from "@clerk/nextjs";
 import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
+import ConditionsBanner from "@/components/ConditionsBanner";
 import DemoPanel from "@/components/DemoPanel";
+import HowItWorks from "@/components/HowItWorks";
+import LumiMark from "@/components/LumiMark";
 import MapLegend from "@/components/MapLegend";
 import NearbyPrompt from "@/components/NearbyPrompt";
 import ReportCrawl from "@/components/ReportCrawl";
 import ReportSheet from "@/components/ReportSheet";
 import RouteControls from "@/components/RouteControls";
+import RouteInsightPanel from "@/components/RouteInsightPanel";
 import RoutePicker, { MAP_POINT, MY_LOCATION } from "@/components/RoutePicker";
 import { fetchRoute, ROUTE_MODES, USE_MOCKS, type LatLon, type RouteMode, type RouteOutcome } from "@/lib/api";
 import { isDemoMode } from "@/lib/demo-api";
@@ -27,6 +31,8 @@ import {
 const NEARBY_POLL_MS = 60_000;
 // Pick up other people's reports and blocks while the page is open (#59).
 const REFRESH_MS = 20_000;
+// Remembers "Got it" on the How Lumi works panel, per browser.
+const HOW_IT_WORKS_KEY = "lumi.howItWorks.dismissed";
 
 // Leaflet touches `window`, so the map only renders in the browser.
 const RouteMap = dynamic(() => import("@/components/RouteMap"), {
@@ -65,6 +71,25 @@ export default function Home() {
   // With a route on screen, From/To collapse into one A → B row until the visitor edits (#68).
   const [isEditingRoute, setIsEditingRoute] = useState(false);
   const [reportsUpdatedAt, setReportsUpdatedAt] = useState<Date | null>(null);
+  // Hidden until the browser's choice is read, so it never flashes for returning visitors.
+  const [isHowItWorksOpen, setIsHowItWorksOpen] = useState(false);
+
+  useEffect(() => {
+    try {
+      setIsHowItWorksOpen(window.localStorage.getItem(HOW_IT_WORKS_KEY) !== "1");
+    } catch {
+      setIsHowItWorksOpen(true); // storage blocked (private mode): show it each visit
+    }
+  }, []);
+
+  function closeHowItWorks() {
+    setIsHowItWorksOpen(false);
+    try {
+      window.localStorage.setItem(HOW_IT_WORKS_KEY, "1");
+    } catch {
+      // storage blocked: it's closed for this visit only
+    }
+  }
 
   // Reports to draw on the map, loaded once on open.
   useEffect(() => {
@@ -327,7 +352,10 @@ export default function Home() {
       <section className={`order-2 flex max-h-[58dvh] flex-col gap-4 overflow-y-auto bg-white p-4 shadow-[0_-8px_24px_rgba(16,42,67,0.12)] md:order-1 md:max-h-none md:w-96 md:p-6 md:shadow-[8px_0_24px_rgba(16,42,67,0.08)]`}>
         <header className="flex items-start justify-between gap-3">
           <div>
-            <h1 className="font-display text-[40px] leading-none font-extrabold tracking-[-0.01em] text-[var(--navy)]">Lumi</h1>
+            <h1 className="font-display flex items-center gap-2.5 text-[40px] leading-none font-extrabold tracking-[-0.01em] text-[var(--navy)]">
+              <LumiMark size={36} />
+              Lumi
+            </h1>
             {/* On phones the tagline gives its space to the chyrons. */}
             <p className="mt-1 hidden text-sm text-[var(--storm)] md:block">
               Winter walking routes around BU, shaped by what people report.
@@ -354,6 +382,10 @@ export default function Home() {
             Mock data: routes and reports here are not real.
           </p>
         )}
+
+        <ConditionsBanner />
+
+        {isHowItWorksOpen && !hasRoute && <HowItWorks onDismiss={closeHowItWorks} />}
 
         {hasRoute && !isEditingRoute ? (
           <RouteSummary
@@ -417,6 +449,7 @@ export default function Home() {
             ))}
           </ul>
         )}
+        {hasRoute && !sharedError && !isLoading && <RouteInsightPanel outcomes={outcomes} selectedMode={selectedMode} />}
 
         <NearbyToggle
           isOn={isNearbyOn}
@@ -431,9 +464,20 @@ export default function Home() {
 
         {isDemo && <DemoPanel route={selectedRoute} onChanged={() => refreshAfterChange()} />}
 
-        <p className="mt-auto text-xs text-[var(--muted)]">
-          Routes use community reports, which can be missing or out of date. Lumi never guarantees a route is safe.
-        </p>
+        <footer className="mt-auto flex flex-col gap-1.5">
+          {!isHowItWorksOpen && (
+            <button
+              type="button"
+              onClick={() => setIsHowItWorksOpen(true)}
+              className="self-start text-sm font-semibold text-[var(--storm)] underline underline-offset-2"
+            >
+              How Lumi works
+            </button>
+          )}
+          <p className="text-xs text-[var(--muted)]">
+            Routes use community reports, which can be missing or out of date. Lumi never guarantees a route is safe.
+          </p>
+        </footer>
       </section>
 
       <div className="relative order-1 flex-1 md:order-2">
