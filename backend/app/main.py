@@ -25,6 +25,7 @@ from app.config import (
     MAX_PHOTO_BYTES,
     MAX_SNAP_DISTANCE_M,
     NEARBY_RADIUS_M,
+    PENDING_RETRY_INTERVAL_S,
     VOTES_TO_FLIP,
     frontend_origins,
 )
@@ -194,11 +195,48 @@ def create_app(
         report_store = store if store is not None else default_store()
         replayed = rebuild_from_store()
         logger.info("Rebuilt segment status from %d stored reports", replayed)
+        stop_retrying = threading.Event()
+        retrier = threading.Thread(target=retry_until_stopped, args=(stop_retrying,), daemon=True)
+        retrier.start()
         try:
             yield
         finally:
+            stop_retrying.set()
+            retrier.join(timeout=5)
             if store is None:  # we opened it, so we close it
                 report_store.close()
+
+    def retry_pending_photos() -> int:
+        """Re-send pending photos to the agent and apply any verdict (#53). Returns how many resolved.
+
+        The agent is called outside the lock, like in POST /reports, so a slow
+        agent never blocks routing. Each verdict is saved before it's applied.
+        """
+        with lock:
+            waiting = reports.pending_photos()
+        resolved = 0
+        for photo_report in waiting:
+            verdict = _review(reviewer, photo_report.photo)
+            if verdict is PhotoVerdict.UNAVAILABLE:
+                continue
+            with lock:
+                try:
+                    report_store.update_status(photo_report.report_id, verdict)
+                except Exception:
+                    logger.exception("Couldn't save the new verdict for %s; will retry", photo_report.report_id)
+                    continue
+                if reports.resolve_pending(photo_report.report_id, verdict) is not None:
+                    resolved += 1
+        if resolved:
+            logger.info("Resolved %d pending photo reports", resolved)
+        return resolved
+
+    def retry_until_stopped(stop: threading.Event) -> None:
+        while not stop.wait(PENDING_RETRY_INTERVAL_S):
+            try:
+                retry_pending_photos()
+            except Exception:  # keep retrying on the next tick
+                logger.exception("Pending photo retry failed")
 
     def save(row: StoredReport) -> None:
         """Store first: if saving fails, the report isn't applied and the user can retry."""
@@ -218,6 +256,7 @@ def create_app(
         allow_headers=["Content-Type", "Authorization"],
     )
     app.state.verify_token = verify_token
+    app.state.retry_pending_photos = retry_pending_photos  # tests and ops can trigger a retry
 
     @app.exception_handler(RequestValidationError)
     async def readable_validation_error(request: Request, error: RequestValidationError) -> JSONResponse:

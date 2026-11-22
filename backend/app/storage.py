@@ -14,7 +14,7 @@ then to memory.
 import logging
 import os
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 import psycopg
@@ -77,6 +77,12 @@ class MemoryReportStore:
     def all(self) -> list[StoredReport]:
         return sorted(self._rows, key=lambda row: (row.reported_at, row.report_id))
 
+    def update_status(self, report_id: str, status: PhotoVerdict) -> None:
+        """A pending photo got its verdict (#53): store it and drop the photo bytes."""
+        self._rows = [
+            replace(row, status=status, photo=None) if row.report_id == report_id else row for row in self._rows
+        ]
+
     def delete_simulated(self) -> int:
         kept = [row for row in self._rows if not row.simulated]
         removed = len(self._rows) - len(kept)
@@ -133,6 +139,12 @@ class PostgresReportStore:
             )
             for *columns, reported_at, status, photo, simulated in rows
         ]
+
+    def update_status(self, report_id: str, status: PhotoVerdict) -> None:
+        """A pending photo got its verdict (#53): store it and drop the photo bytes."""
+        self._connection().execute(
+            "UPDATE reports SET status = %s, photo = NULL WHERE report_id = %s", (status.value, report_id)
+        )
 
     def delete_simulated(self) -> int:
         """Remove demo rows only. Returns how many were deleted."""

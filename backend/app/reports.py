@@ -121,6 +121,19 @@ class SegmentReports:
             return ReportOutcome.STATUS_CHANGED
         return ReportOutcome.VOTE_RECORDED
 
+    def pending_photos(self) -> list[PhotoReport]:
+        """Photo reports still waiting for the agent (#53), oldest first."""
+        return [report for report in self._photo_reports if report.verdict is PhotoVerdict.UNAVAILABLE]
+
+    def resolve_pending(self, report_id: str, verdict: PhotoVerdict) -> ReportOutcome | None:
+        """Apply a late verdict to a pending photo. None if it isn't pending anymore."""
+        for i, report in enumerate(self._photo_reports):
+            if report.report_id == report_id and report.verdict is PhotoVerdict.UNAVAILABLE:
+                report = replace(report, verdict=verdict)
+                self._photo_reports[i] = _drop_photo_once_reviewed(report)
+                return self._apply(report)
+        return None
+
     def retry_pending(self) -> None:
         """Re-send photos the agent could not review earlier."""
         for i, report in enumerate(self._photo_reports):
