@@ -253,6 +253,17 @@ def test_user_with_too_many_blocked_votes_must_send_a_photo(confirming):
     assert response.json() == {"outcome": "photo_required", "segment_status": "open"}
 
 
+def test_still_blocked_on_a_blocked_sidewalk_is_not_refused_over_the_limit(confirming):
+    # #57: confirming a sidewalk that's already blocked never asks for a photo.
+    report(confirming, user="reporter", where=NEAR["C-D"])  # the photo blocks C-D
+    for segment in ["A-B", "B-D", "A-C"]:
+        vote(confirming, segment, "busy", blocked=True)
+
+    response = vote(confirming, "C-D", "busy", blocked=True)
+
+    assert response.json() == {"outcome": "vote_recorded", "segment_status": "blocked"}
+
+
 def test_vote_from_more_than_50_m_away_is_403(confirming):
     response = vote(confirming, "A-B", "u1", blocked=True, where=NEAR["C-D"])  # about 74 m from A-B
 
@@ -435,6 +446,35 @@ def test_cors_origins_come_from_the_environment(street_graph, monkeypatch):
 
     assert allowed.headers["access-control-allow-origin"] == "https://preview.lumi.example"
     assert "access-control-allow-origin" not in localhost.headers
+
+
+# --- #58: oversized uploads are refused before the body is read ------------------
+
+def test_upload_declaring_more_than_the_limit_is_413_before_sign_in(confirming):
+    # No Authorization header: the size check must answer first, without reading the body.
+    response = confirming.post(
+        "/reports",
+        content=b"x" * 16,
+        headers={"Content-Type": "multipart/form-data; boundary=x", "Content-Length": str(7 * 1024 * 1024)},
+    )
+
+    assert response.status_code == 413
+    assert "5 MB" in response.json()["detail"]
+
+
+def test_upload_without_a_declared_length_is_411(confirming):
+    def chunks():
+        yield b"--x\r\n"
+
+    response = confirming.post("/reports", content=chunks(), headers={"Content-Type": "multipart/form-data; boundary=x"})
+
+    assert response.status_code == 411
+
+
+def test_normal_photo_upload_still_works(confirming):
+    response = report(confirming)
+
+    assert response.status_code == 201
 
 
 # Photo report rate limit (#82): each photo reaching the reviewer is a paid Gemini call.

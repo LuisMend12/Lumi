@@ -187,6 +187,29 @@ def test_unblocked_votes_are_never_limited():
     assert outcome is ReportOutcome.VOTE_RECORDED
 
 
+
+def test_confirming_already_blocked_sidewalks_does_not_count_toward_the_limit():
+    # #57: the limit is for people blocking sidewalks, not for people keeping the map current.
+    book = SegmentReports(review_photo=reviewer(PhotoVerdict.CONFIRMED))
+    blocked = [segment_key("X", other) for other in ["s1", "s2", "s3", "s4"]]
+    for segment in blocked:
+        book.report_blocked_with_photo(segment, "reporter", PHOTO, T0)
+
+    outcomes = [book.vote(segment, "helper", blocked=True, now=T0) for segment in blocked]
+
+    assert outcomes == [ReportOutcome.VOTE_RECORDED] * 4
+    assert book.vote(AB, "helper", blocked=True, now=T0) is ReportOutcome.VOTE_RECORDED  # still under the limit
+
+
+def test_user_over_the_limit_can_still_confirm_a_blocked_sidewalk():
+    book = blocked_book()
+    for other in ["s1", "s2", "s3"]:
+        book.vote(segment_key("X", other), "busy", blocked=True, now=T0)
+
+    assert book.vote_needs_photo(AB, "busy", blocked=True, now=T0) is False
+    assert book.vote(AB, "busy", blocked=True, now=T0) is ReportOutcome.VOTE_RECORDED
+    assert book.vote_needs_photo(segment_key("X", "s9"), "busy", blocked=True, now=T0) is True
+
 # --- Routing integration ---------------------------------------------------
 
 
