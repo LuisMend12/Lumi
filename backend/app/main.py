@@ -3,25 +3,26 @@
 import logging
 import threading
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
 import networkx as nx
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from app.config import GRAPH_PATH, MAX_PHOTO_BYTES, MAX_SNAP_DISTANCE_M, NEARBY_RADIUS_M, frontend_origins
-from app.reports import (
-    PhotoReport,
-    PhotoReviewer,
-    PhotoVerdict,
-    SegmentReports,
-    SegmentStatus,
-    new_report_id,
+from app.reports import PhotoReviewer, PhotoVerdict, SegmentReports, SegmentStatus, new_report_id
+from app.routing import (
+    Hazards,
+    NoRouteError,
+    RouteHazard,
+    RouteMode,
+    SegmentKey,
+    find_route,
+    nearest_node,
+    segment_key,
 )
-from app.routing import Hazards, NoRouteError, RouteMode, SegmentKey, find_route, nearest_node, segment_key
 from app.routing import segment_id as make_segment_id
 from app.segments import SegmentIndex
 
@@ -29,17 +30,6 @@ logger = logging.getLogger(__name__)
 
 Latitude = Annotated[float, Query(ge=-90, le=90)]
 Longitude = Annotated[float, Query(ge=-180, le=180)]
-Verification = Literal["confirmed", "unverified", "pending"]
-
-
-class HazardOut(BaseModel):
-    segment_id: str  # "<u>-<v>", smaller OSM node id first
-    location: tuple[float, float]  # (lat, lon) segment midpoint, where the warning goes on the map
-    kind: str
-    severity: float
-    blocked: bool
-    # Only confirmed reports reach routing; unverified and pending ones are listed by GET /reports.
-    verification: Verification
 
 
 class RouteOut(BaseModel):
@@ -49,7 +39,7 @@ class RouteOut(BaseModel):
     coordinates: list[tuple[float, float]]  # (lat, lon)
     snapped_start: tuple[float, float]  # (lat, lon) of the intersection the route starts at
     snapped_end: tuple[float, float]  # (lat, lon) of the intersection the route ends at
-    hazards: list[HazardOut]
+    hazards: list[RouteHazard]  # only confirmed reports reach routing; GET /reports lists the rest
 
 
 class ReportOut(BaseModel):
@@ -80,23 +70,9 @@ class ReportListItem(BaseModel):
     report_id: str
     segment_id: str
     location: tuple[float, float]  # (lat, lon) segment midpoint, same as /route hazards
-    verification: Verification
+    verification: PhotoVerdict  # "confirmed", "unverified" or "pending"
     reported_at: str  # ISO 8601 UTC, e.g. "2026-11-21T18:04:00Z"
     simulated: bool
-
-
-@dataclass
-class _State:
-    """Everything the endpoints share, built once at startup."""
-
-    graph: nx.DiGraph
-    segments: SegmentIndex
-    static_hazards: Hazards  # passed to create_app; kept so tests can set hazards directly
-    reports: SegmentReports
-    review_photo: PhotoReviewer
-    # SegmentReports isn't thread-safe and FastAPI runs sync endpoints in a
-    # thread pool, so every read and write of `reports` holds this lock.
-    lock: threading.Lock
 
 
 def load_street_graph() -> nx.DiGraph:
@@ -140,19 +116,23 @@ def create_app(
     hazards: Hazards | None = None,
     review_photo: PhotoReviewer | None = None,
 ) -> FastAPI:
+    """`hazards` are fixed extra hazards (tests use them); confirmed reports are added on top."""
     reviewer = review_photo if review_photo is not None else unconfigured_reviewer()
+    static_hazards = hazards if hazards is not None else {}
+    # Set at startup by `lifespan`; the endpoints below read them.
+    street_graph: nx.DiGraph
+    segments: SegmentIndex
+    reports: SegmentReports
+    # SegmentReports isn't thread-safe and FastAPI runs sync endpoints in a
+    # thread pool, so every read and write of `reports` holds this lock.
+    lock = threading.Lock()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        nonlocal street_graph, segments, reports
         street_graph = graph if graph is not None else load_street_graph()
-        app.state.lumi = _State(
-            graph=street_graph,
-            segments=SegmentIndex(street_graph),
-            static_hazards=hazards if hazards is not None else {},
-            reports=SegmentReports(review_photo=reviewer),
-            review_photo=reviewer,
-            lock=threading.Lock(),
-        )
+        segments = SegmentIndex(street_graph)
+        reports = SegmentReports(review_photo=reviewer)
         yield
 
     app = FastAPI(title="Lumi API", lifespan=lifespan)
@@ -169,15 +149,12 @@ def create_app(
 
     @app.get("/route", response_model=RouteOut)
     def route(
-        request: Request,
         start_lat: Latitude,
         start_lon: Longitude,
         end_lat: Latitude,
         end_lon: Longitude,
         mode: RouteMode = RouteMode.SAFER,
     ) -> RouteOut:
-        state = _state(request)
-        street_graph = state.graph
         start = _snap(street_graph, start_lat, start_lon, "Start")
         end = _snap(street_graph, end_lat, end_lon, "Destination")
         if start == end:
@@ -185,8 +162,8 @@ def create_app(
                 status_code=422,
                 detail="Start and destination are too close to route between. Pick points farther apart.",
             )
-        with state.lock:
-            route_hazards = _merge_hazards(state.static_hazards, state.reports.hazards())
+        with lock:
+            route_hazards = _merge_hazards(static_hazards, reports.hazards())
         try:
             result = find_route(street_graph, start, end, mode, route_hazards)
         except NoRouteError as error:
@@ -198,59 +175,46 @@ def create_app(
             coordinates=result.coordinates,
             snapped_start=_lat_lon(street_graph, start),
             snapped_end=_lat_lon(street_graph, end),
-            hazards=[
-                HazardOut(
-                    segment_id=rh.segment_id,
-                    location=rh.location,
-                    kind=rh.hazard.kind,
-                    severity=rh.hazard.severity,
-                    blocked=rh.hazard.blocked,
-                    verification="confirmed",
-                )
-                for rh in result.hazards
-            ],
+            hazards=result.hazards,
         )
 
     # Sync (not async) so FastAPI runs it in a worker thread: the photo
     # reviewer can take seconds and must not block the event loop.
     @app.post("/reports", status_code=201, response_model=ReportOut)
     def create_report(
-        request: Request,
         user_id: UserId,
         lat: Annotated[float, Form(ge=-90, le=90)],
         lon: Annotated[float, Form(ge=-180, le=180)],
         photo: Annotated[UploadFile, File()],
     ) -> ReportOut:
-        state = _state(request)
         reported_at = datetime.now(UTC)
         data = photo.file.read(MAX_PHOTO_BYTES + 1)
         if len(data) > MAX_PHOTO_BYTES:
             raise HTTPException(status_code=413, detail="The photo is larger than 5 MB. Send a smaller one.")
         if image_type(data) is None:
             raise HTTPException(status_code=415, detail="The photo must be a JPEG, PNG or WebP image.")
-        sid, distance_m = state.segments.nearest(lat, lon)
+        sid, distance_m = segments.nearest(lat, lon)
         if distance_m > MAX_SNAP_DISTANCE_M:
             raise HTTPException(
                 status_code=422,
                 detail=f"This spot is outside Lumi's coverage area ({distance_m:.0f} m from the nearest mapped sidewalk).",
             )
 
-        verdict = _review(state.review_photo, data)  # outside the lock: it may be slow
+        verdict = _review(reviewer, data)  # outside the lock: it may be slow
         report_id = new_report_id()
-        segment = _key(state, sid)
-        with state.lock:
-            outcome = state.reports.report_blocked_with_photo(
-                segment, user_id, data, reported_at, report_id=report_id, location=(lat, lon), verdict=verdict
+        segment = _key(segments, sid)
+        with lock:
+            outcome = reports.report_blocked_with_photo(
+                segment, user_id, data, reported_at, report_id=report_id, verdict=verdict
             )
-            status = state.reports.status(segment)
+            status = reports.status(segment)
         return ReportOut(report_id=report_id, segment_id=sid, outcome=outcome.value, segment_status=status)
 
     @app.post("/segments/{segment_id}/votes", response_model=VoteOut)
-    def vote(request: Request, segment_id: str, body: VoteIn, user_id: UserId) -> VoteOut:
-        state = _state(request)
-        if segment_id not in state.segments:
+    def vote(segment_id: str, body: VoteIn, user_id: UserId) -> VoteOut:
+        if segment_id not in segments:
             raise HTTPException(status_code=404, detail=f"No sidewalk segment with id {segment_id}.")
-        distance_m = state.segments.distance_m(segment_id, body.lat, body.lon)
+        distance_m = segments.distance_m(segment_id, body.lat, body.lon)
         if distance_m > NEARBY_RADIUS_M:
             raise HTTPException(
                 status_code=403,
@@ -259,53 +223,46 @@ def create_app(
                     f"(you're {distance_m:.0f} m away)."
                 ),
             )
-        segment = _key(state, segment_id)
-        with state.lock:
-            outcome = state.reports.vote(segment, user_id, body.blocked, datetime.now(UTC))
-            status = state.reports.status(segment)
+        segment = _key(segments, segment_id)
+        with lock:
+            outcome = reports.vote(segment, user_id, body.blocked, datetime.now(UTC))
+            status = reports.status(segment)
         return VoteOut(outcome=outcome.value, segment_status=status)
 
     @app.get("/segments/nearby", response_model=list[NearbySegmentOut])
-    def nearby_segments(request: Request, lat: Latitude, lon: Longitude) -> list[NearbySegmentOut]:
-        state = _state(request)
-        close = state.segments.within(lat, lon, NEARBY_RADIUS_M)
-        with state.lock:
-            reported = {_sid(key): state.reports.status(key) for key in state.reports.reported_segments()}
+    def nearby_segments(lat: Latitude, lon: Longitude) -> list[NearbySegmentOut]:
+        close = segments.within(lat, lon, NEARBY_RADIUS_M)
+        with lock:
+            reported = {_sid(key): reports.status(key) for key in reports.reported_segments()}
         found = sorted((distance, sid) for sid, distance in close.items() if sid in reported)
         return [
-            NearbySegmentOut(segment_id=sid, status=reported[sid], coordinates=state.segments.coordinates(sid))
+            NearbySegmentOut(segment_id=sid, status=reported[sid], coordinates=segments.coordinates(sid))
             for _, sid in found
         ]
 
     @app.get("/reports", response_model=list[ReportListItem])
-    def list_reports(request: Request) -> list[ReportListItem]:
-        state = _state(request)
-        with state.lock:
-            book = state.reports
+    def list_reports() -> list[ReportListItem]:
+        with lock:
             # A confirmed photo stops being shown once votes reopen its segment:
             # drawing it would contradict the segment's current status.
-            listed: list[tuple[PhotoReport, Verification]] = [
-                (r, "confirmed") for r in book.confirmed_reports() if book.status(r.segment) is SegmentStatus.BLOCKED
+            listed = [
+                r
+                for r in reports.photo_reports()
+                if r.verdict is not PhotoVerdict.CONFIRMED or reports.status(r.segment) is SegmentStatus.BLOCKED
             ]
-            listed += [(r, "unverified") for r in book.unverified_reports()]
-            listed += [(r, "pending") for r in book.pending_reports()]
-        listed.sort(key=lambda item: item[0].reported_at, reverse=True)  # newest first
-        items = []
-        for report, verification in listed:
-            sid = _sid(report.segment)
-            if sid not in state.segments:
-                continue  # not on this graph; can't place it on the map
-            items.append(
-                ReportListItem(
-                    report_id=report.report_id,
-                    segment_id=sid,
-                    location=state.segments.midpoint(sid),
-                    verification=verification,
-                    reported_at=_iso_utc(report.reported_at),
-                    simulated=False,  # no simulated demo reports yet
-                )
+        listed.sort(key=lambda r: r.reported_at, reverse=True)  # newest first
+        return [
+            ReportListItem(
+                report_id=r.report_id,
+                segment_id=sid,
+                location=segments.midpoint(sid),
+                verification=r.verdict,
+                reported_at=_iso_utc(r.reported_at),
+                simulated=False,  # no simulated demo reports yet
             )
-        return items
+            for r in listed
+            if (sid := _sid(r.segment)) in segments  # a report off this graph can't be placed on the map
+        ]
 
     return app
 
@@ -333,17 +290,12 @@ def _review(review_photo: PhotoReviewer, photo: bytes) -> PhotoVerdict:
         return PhotoVerdict.UNAVAILABLE
 
 
-def _state(request: Request) -> _State:
-    return request.app.state.lumi
-
-
-def _key(state: _State, sid: str) -> SegmentKey:
-    return segment_key(*state.segments.endpoints(sid))
+def _key(segments: SegmentIndex, sid: str) -> SegmentKey:
+    return segment_key(*segments.endpoints(sid))
 
 
 def _sid(key: SegmentKey) -> str:
-    nodes = sorted(key)
-    return make_segment_id(nodes[0], nodes[-1])
+    return make_segment_id(min(key), max(key))
 
 
 def _merge_hazards(static: Hazards, reported: Hazards) -> Hazards:

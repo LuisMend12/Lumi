@@ -115,7 +115,7 @@ def test_route_rejects_points_that_snap_to_the_same_intersection(client):
     )
 
 
-def test_route_hazard_has_segment_id_location_and_verification(street_graph):
+def test_route_hazard_has_segment_id_and_location(street_graph):
     hazards = {segment_key("B", "A"): [Hazard(kind="ice", severity=0.6, blocked=False)]}
     app = create_app(graph=street_graph, hazards=hazards)
 
@@ -130,5 +130,4 @@ def test_route_hazard_has_segment_id_location_and_verification(street_graph):
         "kind": "ice",
         "severity": 0.6,
         "blocked": False,
-        "verification": "confirmed",
     }

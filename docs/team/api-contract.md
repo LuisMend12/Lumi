@@ -31,15 +31,14 @@ The response stays as today, with these additions:
       "location": [42.3497, -71.1001],
       "kind": "ice",
       "severity": 0.6,
-      "blocked": false,
-      "verification": "confirmed"
+      "blocked": false
     }
   ]
 }
 ```
 
 - **New** `snapped_start` / `snapped_end`: the intersections the route actually starts and ends at. The frontend draws a dashed line from the point the user tapped to each of these.
-- **New** in each hazard: `segment_id`, `location` (the segment midpoint, where the warning goes on the map) and `verification`. `verification` is `confirmed` today because only confirmed blocks reach routing.
+- **New** in each hazard: `segment_id` and `location` (the segment midpoint, where the warning goes on the map). Route hazards have no `verification` field: only confirmed reports reach routing, so every route hazard counts as confirmed. Unverified and pending reports come from `GET /reports`.
 - **New** error: `422` "Start and destination are too close" when both points snap to the same intersection.
 
 ## `POST /reports` (new): report a blocked sidewalk with a photo

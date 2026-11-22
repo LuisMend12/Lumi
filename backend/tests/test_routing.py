@@ -39,7 +39,7 @@ def test_shortest_goes_through_ice_but_reports_it(street_graph):
     assert isinstance(route_hazard, RouteHazard)
     assert route_hazard.segment_id == "A-B"
     assert route_hazard.location == pytest.approx((42.3500, -71.1074))
-    assert route_hazard.hazard == ICE
+    assert (route_hazard.kind, route_hazard.severity, route_hazard.blocked) == ("ice", 0.9, False)
 
 
 def test_route_hazard_location_is_segment_midpoint_and_id_is_direction_free(street_graph):
@@ -51,7 +51,7 @@ def test_route_hazard_location_is_segment_midpoint_and_id_is_direction_free(stre
     [route_hazard] = route.hazards
     assert route_hazard.segment_id == "B-D"
     assert route_hazard.location == pytest.approx((42.3500, -71.1062))
-    assert route_hazard.hazard == ICE
+    assert route_hazard.kind == "ice"
 
 
 def test_safer_detours_around_ice(street_graph):
