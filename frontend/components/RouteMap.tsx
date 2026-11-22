@@ -1,7 +1,8 @@
 "use client";
 
 import "leaflet/dist/leaflet.css";
-import { Circle, CircleMarker, MapContainer, Polyline, TileLayer, Tooltip, useMapEvents } from "react-leaflet";
+import L from "leaflet";
+import { Circle, CircleMarker, MapContainer, Marker, Polyline, TileLayer, Tooltip, useMapEvents } from "react-leaflet";
 import type { Hazard, LatLon, RouteMode, RouteOutcome } from "@/lib/api";
 import { AREA_CENTER, AREA_RADIUS_M, MODE_STYLES, NAVY, VERIFICATION_STYLES, hazardLabel } from "@/lib/modes";
 import type { NearbySegment, Report } from "@/lib/reports-api";
@@ -16,6 +17,19 @@ type Props = {
   onMapClick: (point: LatLon) => void;
   onSelectRoute: (mode: RouteMode) => void;
 };
+
+// Lettered pins for the start (A) and destination (B), styled in globals.css (#66).
+const PIN_SIZE = 28;
+function letterPin(letter: "A" | "B", variant: "start" | "end") {
+  return L.divIcon({
+    className: "",
+    html: `<span class="lumi-pin lumi-pin--${variant}">${letter}</span>`,
+    iconSize: [PIN_SIZE, PIN_SIZE],
+    iconAnchor: [PIN_SIZE / 2, PIN_SIZE / 2],
+  });
+}
+const START_PIN = letterPin("A", "start");
+const END_PIN = letterPin("B", "end");
 
 const NEARBY_HIGHLIGHT = "#f59e0b";
 
@@ -129,12 +143,8 @@ export default function RouteMap({
       {selectedRoute?.hazards.map((hazard, i) => (
         <HazardMarker key={hazard.segment_id ?? i} hazard={hazard} />
       ))}
-      {start && (
-        <CircleMarker center={start} radius={8} pathOptions={{ color: "#fff", weight: 3, fillColor: NAVY, fillOpacity: 1 }} />
-      )}
-      {end && (
-        <CircleMarker center={end} radius={8} pathOptions={{ color: NAVY, weight: 3, fillColor: "#fff", fillOpacity: 1 }} />
-      )}
+      {start && <Marker position={start} icon={START_PIN} keyboard={false} title="Start (A)" />}
+      {end && <Marker position={end} icon={END_PIN} keyboard={false} title="Destination (B)" />}
     </MapContainer>
   );
 }
