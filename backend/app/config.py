@@ -16,6 +16,10 @@ GRAPH_PATH = BACKEND_DIR / "data" / "bu_walk.graphml"
 # treated as outside the coverage area instead of silently snapped.
 MAX_SNAP_DISTANCE_M = 250
 
+# Accessible mode (#33): a start or end reachable only by stairs moves to the
+# nearest point of the step-free network if it's at most this far away.
+MAX_STEP_FREE_SNAP_M = 100
+
 # How strongly Safer mode avoids hazards: a segment with risk 1.0 costs
 # (1 + SAFER_RISK_WEIGHT) times its length. Starting value; tune with data.
 SAFER_RISK_WEIGHT = 4.0
