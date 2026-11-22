@@ -1,4 +1,4 @@
-"""Shared test fixtures: a tiny fake street network near BU.
+r"""Shared test fixtures: a tiny fake street network near BU.
 
 Layout (two ways from A to D):
 
