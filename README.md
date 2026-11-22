@@ -183,7 +183,13 @@ Later: Mastra as the photo-review agent, Gemini image generation for branding, a
 
 ## Known limitations
 
-- Hazard reports aren't implemented, so routes currently ignore real conditions.
+- **Report locations are self-reported (#60).** A report's or vote's location is whatever the phone sends, and the 50 m "nearby" check uses that same number. A photo can't prove where it was taken either. So four signed-in accounts could flip a sidewalk from anywhere, and one real photo of a blocked sidewalk could be sent for a different one. What limits this today:
+  - sign-in is required;
+  - each user can make at most 3 block attempts a day before they must send a photo;
+  - photos are checked by the photo agent.
+
+  None of that proves location. A real launch would add device attestation (App Attest / Play Integrity), limits per account per sidewalk, and a second person confirming before a photo blocks a sidewalk.
+  **In the pitch, say it plainly:** "Locations come from the phone, so a determined person with several accounts could fake reports. For the hackathon we rely on sign-in, rate limits and photo checks; a launch would add device attestation and a second confirmation."
 - Accessible mode has no curb ramp or slope data yet; it treats hazards the same way Safer does.
 - Points snap to the nearest intersection, not the nearest point along a sidewalk. The short stretch to that intersection isn't drawn.
 - Never present a route as "safe": reports can be missing or out of date.
