@@ -23,7 +23,7 @@ You're helping one of two people build Lumi in parallel. One person owns `backen
 
 | Lane | Edit freely | Ask first |
 |---|---|---|
-| backend | `backend/**` | anything in `frontend/` |
+| backend | `backend/**`, `mastra/**` (the photo-review agent service) | anything in `frontend/` |
 | frontend | `frontend/**` | anything in `backend/` |
 | shared | `docs/team/api-contract.md`, `.gitignore`, `README.md`, `.github/**` | always change these in their own small PR, and tell the other human |
 
@@ -52,7 +52,7 @@ gh pr create --title "<what the PR does>" --body-file <filled PR template>
 - Keep **confirmed**, **unverified** and **pending** reports separate, in storage, in the API and in the UI. Only confirmed blocks affect routing today. Simulated demo data always carries `simulated: true` and a visible badge.
 - **AI never blocks a segment alone.** A photo blocks a segment only when a user reported it and the photo reviewer confirmed it (plan §2 items 7 and 9).
 - **Secrets** go in `backend/.env` or `frontend/.env.local`, both ignored by git. Never commit them, never print their values, and stop and tell your human if you see one in a diff.
-- **Decided:** photo review is a Claude vision call inside FastAPI (`claude-opus-5-5`, structured outputs, based on `backend/scripts/try_vision.py`), not a Mastra service.
+- **Decided:** photo review runs as a Mastra agent on Gemini's free tier; FastAPI calls it over HTTP (decided 2026-11-21 by both lanes). The agent is in `mastra/` (`POST /review`), and the confirm rule stays in `backend/app/photo_review.py`. The key goes in `mastra/.env`. Free-tier Gemini may use photos to improve Google's products, so test with photos without identifiable people.
 - **Decided:** storage is Tiger Data. Don't depend on PostGIS. Store lat/lon and `segment_id` as plain columns.
 - Don't add a dependency just to qualify for a sponsor prize.
 
