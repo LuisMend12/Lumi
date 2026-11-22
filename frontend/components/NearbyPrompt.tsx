@@ -16,7 +16,8 @@ type Props = {
 export default function NearbyPrompt({ segment, isSending, message, onVote, onDismiss }: Props) {
   const [isOpen, setIsOpen] = useState(false);
   const question = segment.status === "blocked" ? "Is this sidewalk still blocked?" : "Is this sidewalk blocked?";
-  const position = "absolute bottom-20 left-4 z-[900] md:top-4 md:right-4 md:bottom-auto md:left-auto";
+  // Clear of the report crawl and the Report button on phones, under the zoom control on desktop.
+  const position = "absolute bottom-[7.5rem] left-4 z-[900] md:top-24 md:right-4 md:bottom-auto md:left-auto";
 
   if (!isOpen) {
     return (
@@ -26,7 +27,7 @@ export default function NearbyPrompt({ segment, isSending, message, onVote, onDi
         aria-expanded={false}
         className={`${position} flex items-center gap-2 rounded-full bg-white py-2 pr-4 pl-3 text-sm font-semibold text-[var(--navy)] shadow-[0_6px_18px_rgba(16,42,67,0.22)] hover:bg-[var(--snow)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--navy)]`}
       >
-        <span className="h-2.5 w-2.5 rounded-full bg-amber-500" aria-hidden />
+        <span className="h-2.5 w-2.5 rounded-full bg-[var(--amber)]" aria-hidden />
         Reported sidewalk near you
       </button>
     );

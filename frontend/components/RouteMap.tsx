@@ -2,9 +2,10 @@
 
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
-import { Circle, CircleMarker, MapContainer, Marker, Polyline, TileLayer, Tooltip, useMapEvents } from "react-leaflet";
+import { Fragment, useEffect, useRef } from "react";
+import { Circle, CircleMarker, MapContainer, Marker, Polyline, TileLayer, Tooltip, useMap, useMapEvents, ZoomControl } from "react-leaflet";
 import type { Hazard, LatLon, RouteMode, RouteOutcome } from "@/lib/api";
-import { AREA_CENTER, AREA_RADIUS_M, MODE_STYLES, NAVY, VERIFICATION_STYLES, hazardLabel } from "@/lib/modes";
+import { AMBER, AREA_CENTER, AREA_RADIUS_M, MODE_STYLES, NAVY, VERIFICATION_STYLES, hazardLabel } from "@/lib/modes";
 import type { NearbySegment, Report } from "@/lib/reports-api";
 
 type Props = {
@@ -31,7 +32,7 @@ function letterPin(letter: "A" | "B", variant: "start" | "end") {
 const START_PIN = letterPin("A", "start");
 const END_PIN = letterPin("B", "end");
 
-const NEARBY_HIGHLIGHT = "#f59e0b";
+const NEARBY_HIGHLIGHT = AMBER; // a report state, so it keeps the report-state amber
 
 function ReportMarker({ report }: { report: Report }) {
   const style = VERIFICATION_STYLES[report.verification];
@@ -40,14 +41,28 @@ function ReportMarker({ report }: { report: Report }) {
     <CircleMarker
       center={report.location}
       radius={6}
-      pathOptions={{ color: NAVY, weight: 2, fillColor: style.fill, fillOpacity: style.fillOpacity, dashArray: "2 3" }}
+      pathOptions={{ color: style.stroke, weight: 2.5, dashArray: style.dashArray, fillColor: style.fill, fillOpacity: style.fillOpacity }}
     >
       {/* Simulated reports keep their badge on screen; real ones show the label on hover or tap. */}
-      <Tooltip direction="right" offset={[8, 0]} permanent={report.simulated}>
+      {/* "auto" flips the tooltip to whichever side has room, so it isn't clipped at the map edge. */}
+      <Tooltip direction="auto" offset={[8, 0]} permanent={report.simulated}>
         {report.simulated ? `Simulated · ${label}` : label}
       </Tooltip>
     </CircleMarker>
   );
+}
+
+// When a new route appears (new start or end), fit it in view; switching modes or the
+// 20 s refresh leaves the map where the visitor put it.
+function FitRoute({ coordinates, routeKey }: { coordinates: LatLon[] | null; routeKey: string }) {
+  const map = useMap();
+  const fittedKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (!coordinates || coordinates.length < 2 || fittedKey.current === routeKey) return;
+    fittedKey.current = routeKey;
+    map.fitBounds(L.latLngBounds(coordinates), { paddingTopLeft: [24, 64], paddingBottomRight: [24, 120] });
+  }, [coordinates, routeKey, map]);
+  return null;
 }
 
 function ClickHandler({ onMapClick }: { onMapClick: (point: LatLon) => void }) {
@@ -69,9 +84,9 @@ function HazardMarker({ hazard }: { hazard: Hazard }) {
     <CircleMarker
       center={hazard.location}
       radius={9}
-      pathOptions={{ color: NAVY, weight: 2.5, fillColor: style.fill, fillOpacity: style.fillOpacity }}
+      pathOptions={{ color: style.stroke, weight: 3, dashArray: style.dashArray, fillColor: style.fill, fillOpacity: style.fillOpacity }}
     >
-      <Tooltip direction="top" offset={[0, -8]} permanent>
+      <Tooltip direction="auto" offset={[0, -8]} permanent>
         {hazardLabel(hazard)}
       </Tooltip>
     </CircleMarker>
@@ -96,7 +111,11 @@ export default function RouteMap({
   const selectedRoute = selected?.status === "ok" ? selected.route : null;
 
   return (
-    <MapContainer center={AREA_CENTER} zoom={15} className="h-full w-full">
+    <MapContainer center={AREA_CENTER} zoom={15} className="h-full w-full" zoomControl={false}>
+      {/* Top-right, so the LIVE label owns the top-left (#68). */}
+      <ZoomControl position="topright" />
+      {/* OpenStreetMap tiles (no API key), muted into the palette by a filter on the tile layer
+          in globals.css, so routes and reports carry the colour (#68). */}
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -108,6 +127,7 @@ export default function RouteMap({
         interactive={false}
       />
       <ClickHandler onMapClick={onMapClick} />
+      <FitRoute coordinates={selectedRoute?.coordinates ?? null} routeKey={`${start}|${end}`} />
       {reports.map((report) => (
         <ReportMarker key={report.report_id} report={report} />
       ))}
@@ -123,19 +143,33 @@ export default function RouteMap({
         if (outcome?.status !== "ok") return null;
         const isSelected = mode === selectedMode;
         const style = MODE_STYLES[mode];
+        const weight = isSelected ? 7 : 4;
         return (
-          <Polyline
-            key={mode}
-            positions={outcome.route.coordinates}
-            pathOptions={{
-              color: style.color,
-              weight: isSelected ? 7 : 4,
-              opacity: isSelected ? 0.95 : 0.55,
-              dashArray: style.dashArray,
-              lineCap: "round",
-            }}
-            eventHandlers={{ click: () => onSelectRoute(mode) }}
-          />
+          <Fragment key={mode}>
+            {/* An underlay per mode keeps every line legible on the pale basemap: navy under the pale
+                Shortest line, white under the darker ones. */}
+            <Polyline
+              positions={outcome.route.coordinates}
+              pathOptions={{
+                color: style.casing.color,
+                weight: weight + 5,
+                opacity: style.casing.opacity * (isSelected ? 1 : 0.7),
+                lineCap: "round",
+              }}
+              interactive={false}
+            />
+            <Polyline
+              positions={outcome.route.coordinates}
+              pathOptions={{
+                color: style.color,
+                weight,
+                opacity: isSelected ? 1 : 0.75,
+                dashArray: style.dashArray,
+                lineCap: "round",
+              }}
+              eventHandlers={{ click: () => onSelectRoute(mode) }}
+            />
+          </Fragment>
         );
       })}
       <SnapLeg tapped={start} snapped={selectedRoute?.snapped_start} />
