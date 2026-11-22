@@ -425,6 +425,7 @@ def create_app(
         segment = demo_segment(segment_id)
         lat, lon = segments.midpoint(segment_id)
         outcome = None
+        votes_cast = 0  # simulated voters refused as photo_required cast nothing
         with lock:
             for n in range(1, body.voters + 1):
                 user = f"{DEMO_USER_PREFIX}{n}"
@@ -434,8 +435,9 @@ def create_app(
                     continue
                 save(StoredReport(new_vote_id(), segment_id, user, lat, lon, body.blocked, now, simulated=True))
                 outcome = reports.vote(segment, user, body.blocked, now).value
+                votes_cast += 1
             status = reports.status(segment)
-        return DemoVotesOut(votes_cast=body.voters, outcome=outcome, segment_status=status)
+        return DemoVotesOut(votes_cast=votes_cast, outcome=outcome, segment_status=status)
 
     @app.post("/demo/reset", response_model=DemoResetOut)
     def demo_reset() -> DemoResetOut:

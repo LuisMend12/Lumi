@@ -50,7 +50,7 @@ export async function fetchRoute(start: LatLon, end: LatLon, mode: RouteMode): P
   });
   try {
     const response = await fetch(`${API_URL}/route?${params}`);
-    const body: unknown = await response.json();
+    const body: unknown = await response.json().catch(() => null); // e.g. a proxy's HTML 502 page
     if (response.ok) return { status: "ok", route: body as Route };
     return { status: "error", message: errorMessage(response.status, body) };
   } catch {
